@@ -303,6 +303,62 @@ impl Engine {
         }));
     }
 
+    pub fn frame_rgba(&mut self) -> Vec<u8> {
+        self.ensure_readback_buffer();
+        let buf = self.readback_buf.as_ref().unwrap();
+        let padded = self.readback_pad_bytes_per_row;
+        let (w, h) = self.size;
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("readback"),
+            });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.color,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: buf,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded),
+                    rows_per_image: None,
+                },
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.queue.submit([encoder.finish()]);
+
+        let slice = buf.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+
+        let data = slice.get_mapped_range();
+        let unpadded_bytes_per_row = w as usize * 4;
+        let mut pixels = Vec::with_capacity(unpadded_bytes_per_row * h as usize);
+        for row in 0..h as usize {
+            let start = row * padded as usize;
+            pixels.extend_from_slice(&data[start..start + unpadded_bytes_per_row]);
+        }
+        drop(data);
+        buf.unmap();
+        pixels
+    }
+
+    pub fn frame_image(&mut self) -> image::RgbaImage {
+        let (w, h) = self.size;
+        let pixels = self.frame_rgba();
+        image::RgbaImage::from_raw(w, h, pixels).expect("pixel buffer size mismatch")
+    }
+
     /// Reallocate color + depth textures at a new size.
     pub fn resize(&mut self, width: u32, height: u32) {
         self.color = Self::make_color(&self.device, width, height);

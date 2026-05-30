@@ -196,6 +196,10 @@ fn save_png(pixels: &[u8], width: u32, height: u32, name: &str) {
         .expect("failed to save PNG");
 }
 
+fn has_rasterized_pixel_image(img: &image::RgbaImage) -> bool {
+    img.pixels().any(|p| p.0[0] > 80)
+}
+
 fn has_rasterized_pixel(pixels: &[u8]) -> bool {
     // Rendered Lambert shading (base 0.85 × min factor 0.15 in linear → sRGB)
     // produces R values well above 80; clear color (0.05 linear) maps to ~45/255.
@@ -252,4 +256,21 @@ fn render_smoke() {
             "bunny: nothing was rasterized"
         );
     }
+}
+
+#[test]
+fn frame_image_returns_rendered_pixels() {
+    let mut engine = Engine::new(256, 144);
+    let mesh = Arc::new(cube_mesh());
+    let mut scene = Scene::new(perspective([2.0, 2.0, 2.0], [0.0, 0.0, 0.0], 0.1, 100.0));
+    scene.spawn_mesh(mesh, glam::Mat4::IDENTITY);
+    engine.render(&scene);
+
+    let img = engine.frame_image();
+    assert_eq!(img.width(), 256);
+    assert_eq!(img.height(), 144);
+    assert!(
+        has_rasterized_pixel_image(&img),
+        "frame_image: nothing was rasterized"
+    );
 }
