@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
+use glam::{Mat4, Quat, Vec3};
+
 pub struct Engine {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -21,6 +23,9 @@ pub struct Engine {
         HashMap<*const crate::mesh::Mesh, (Arc<crate::mesh::Mesh>, wgpu::Buffer, wgpu::Buffer)>,
     readback_buf: Option<wgpu::Buffer>,
     readback_pad_bytes_per_row: u32,
+    current_scene: Option<crate::scene::Scene>,
+    scene_mesh_cache: HashMap<String, Arc<crate::mesh::Mesh>>,
+    quad_mesh: Option<Arc<crate::mesh::Mesh>>,
 }
 
 impl Engine {
@@ -163,6 +168,9 @@ impl Engine {
             mesh_cache: HashMap::new(),
             readback_buf: None,
             readback_pad_bytes_per_row: 0,
+            current_scene: None,
+            scene_mesh_cache: HashMap::new(),
+            quad_mesh: None,
         }
     }
 
@@ -365,6 +373,128 @@ impl Engine {
         self.depth = Self::make_depth(&self.device, width, height);
         self.size = (width, height);
         self.readback_buf = None;
+    }
+
+    pub fn load_scene(&mut self, scene_data: &scene_format::Scene) {
+        use crate::scene::{
+            Camera as EngineCamera, Projection as EngineProjection, Scene as EngineScene,
+        };
+
+        let cam = scene_data
+            .camera
+            .as_ref()
+            .map(|c| {
+                let projection = match &c.projection {
+                    scene_format::Projection::Perspective {
+                        fov_y_degrees,
+                        aspect,
+                        znear,
+                        zfar,
+                    } => EngineProjection::Perspective {
+                        fov_y_radians: fov_y_degrees.to_radians(),
+                        aspect: *aspect,
+                        znear: *znear,
+                        zfar: *zfar,
+                    },
+                    scene_format::Projection::Orthographic {
+                        half_height,
+                        aspect,
+                        znear,
+                        zfar,
+                    } => EngineProjection::Orthographic {
+                        half_height: *half_height,
+                        aspect: *aspect,
+                        znear: *znear,
+                        zfar: *zfar,
+                    },
+                };
+                EngineCamera {
+                    eye: Vec3::from(c.eye),
+                    target: Vec3::from(c.target),
+                    up: Vec3::from(c.up),
+                    projection,
+                }
+            })
+            .unwrap_or_else(|| {
+                let (w, h) = self.size;
+                EngineCamera {
+                    eye: Vec3::new(3.0, 3.0, 3.0),
+                    target: Vec3::ZERO,
+                    up: Vec3::Y,
+                    projection: EngineProjection::Perspective {
+                        fov_y_radians: 60.0_f32.to_radians(),
+                        aspect: w as f32 / h as f32,
+                        znear: 0.1,
+                        zfar: 100.0,
+                    },
+                }
+            });
+
+        let mut sc = EngineScene::new(cam);
+
+        for node in &scene_data.nodes {
+            self.spawn_node(&mut sc, node, Mat4::IDENTITY);
+        }
+
+        self.current_scene = Some(sc);
+    }
+
+    fn spawn_node(
+        &mut self,
+        scene: &mut crate::scene::Scene,
+        node: &scene_format::Node,
+        parent_transform: Mat4,
+    ) {
+        use crate::mesh::Mesh;
+        let t = &node.transform;
+        let local = Mat4::from_scale_rotation_translation(
+            Vec3::from(t.scale),
+            Quat::from_array(t.rotation),
+            Vec3::from(t.translation),
+        );
+        let world = parent_transform * local;
+
+        if let Some(tilemap) = &node.tilemap {
+            if self.quad_mesh.is_none() {
+                if let Ok(m) = Mesh::from_obj_file("assets/quad.obj") {
+                    self.quad_mesh = Some(Arc::new(m));
+                }
+            }
+            if let Some(quad) = self.quad_mesh.as_ref() {
+                for cell in &tilemap.cells {
+                    let model = world
+                        * Mat4::from_translation(Vec3::new(
+                            cell.x as f32 * tilemap.tile_size[0],
+                            0.0,
+                            cell.y as f32 * tilemap.tile_size[1],
+                        ));
+                    scene.spawn_mesh(Arc::clone(quad), model);
+                }
+            }
+        }
+
+        if let Some(mesh_ref) = &node.mesh {
+            if !self.scene_mesh_cache.contains_key(&mesh_ref.path) {
+                if let Ok(m) = Mesh::from_obj_file(&mesh_ref.path) {
+                    self.scene_mesh_cache
+                        .insert(mesh_ref.path.clone(), Arc::new(m));
+                }
+            }
+            if let Some(mesh) = self.scene_mesh_cache.get(&mesh_ref.path) {
+                scene.spawn_mesh(Arc::clone(mesh), world);
+            }
+        }
+
+        for child in &node.children {
+            self.spawn_node(scene, child, world);
+        }
+    }
+
+    pub fn render_current(&mut self) {
+        if let Some(scene) = self.current_scene.take() {
+            self.render(&scene);
+            self.current_scene = Some(scene);
+        }
     }
 
     fn make_color(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Texture {
