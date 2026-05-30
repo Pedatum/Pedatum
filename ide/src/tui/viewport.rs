@@ -2,7 +2,6 @@ use image::DynamicImage;
 use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
 use shinra_engine::engine::Engine;
-use shinra_engine::EngineBackend;
 
 const RENDER_WIDTH: u32 = 256;
 const RENDER_HEIGHT: u32 = 192;
