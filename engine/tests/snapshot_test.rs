@@ -61,3 +61,27 @@ fn snapshot_compare_identical() {
         2
     ));
 }
+
+#[test]
+fn snapshot_cube_matches_baseline() {
+    render_scene_to_png("tests/fixtures/cube.ron", "cube_baseline_check.png", 256, 144);
+
+    let actual = Path::new("target/debug/snapshots/cube_baseline_check.png");
+    let expected = Path::new("tests/snapshots/cube_256x144.png");
+
+    assert!(
+        compare_snapshots(actual, expected, 2),
+        "cube render differs from baseline beyond tolerance"
+    );
+}
+
+#[test]
+fn snapshot_update_baselines() {
+    if std::env::var("UPDATE_SNAPSHOTS").is_err() {
+        return;
+    }
+    render_scene_to_png("tests/fixtures/cube.ron", "cube_update.png", 256, 144);
+    let src = Path::new("target/debug/snapshots/cube_update.png");
+    let dst = Path::new("tests/snapshots/cube_256x144.png");
+    std::fs::copy(src, dst).unwrap();
+}
