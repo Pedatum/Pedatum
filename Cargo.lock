@@ -1003,6 +1003,7 @@ dependencies = [
  "ron",
  "scene",
  "shinra-engine",
+ "tempfile",
  "wgpu",
 ]
 
