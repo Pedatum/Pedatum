@@ -35,7 +35,7 @@ pub struct AppState {
     pub selected_node: Option<usize>,
     pub inspector: InspectorState,
     pub project: ProjectState,
-    pub terminal: EmbeddedTerminal,
+    pub terminal: Option<EmbeddedTerminal>,
 }
 
 impl AppState {
@@ -58,7 +58,29 @@ impl AppState {
             selected_node,
             inspector,
             project,
-            terminal,
+            terminal: Some(terminal),
+        })
+    }
+
+    pub fn new_headless(games_dir: &Path) -> Result<Self> {
+        let loader = Loader::scan(games_dir)?;
+        let hierarchy = loader
+            .current_game()
+            .map(|g| HierarchyState::from_scene(&g.scene))
+            .unwrap_or_else(|| HierarchyState::from_scene(&Scene::default()));
+        let selected_node = hierarchy.selected_node_index();
+        let inspector = Self::build_inspector(loader.current_game().map(|g| &g.scene), selected_node);
+        let project_root = std::env::current_dir().unwrap_or_else(|_| games_dir.to_path_buf());
+        let project = ProjectState::scan(&project_root);
+        Ok(Self {
+            running: true,
+            focused: PanelId::Viewport,
+            loader,
+            hierarchy,
+            selected_node,
+            inspector,
+            project,
+            terminal: None,
         })
     }
 

@@ -65,7 +65,7 @@ fn draw_menu_bar(f: &mut Frame, area: Rect, app: &AppState) {
     f.render_widget(Paragraph::new(line), area);
 }
 
-pub fn draw(f: &mut Frame, app: &AppState, viewport: &mut Viewport) -> PanelAreas {
+pub fn draw(f: &mut Frame, app: &AppState, viewport: Option<&mut Viewport>) -> PanelAreas {
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -92,10 +92,12 @@ pub fn draw(f: &mut Frame, app: &AppState, viewport: &mut Viewport) -> PanelArea
     let vp_inner = vp_block.inner(middle[1]);
     f.render_widget(vp_block, middle[1]);
 
-    if let Some(game) = app.loader.current_game() {
-        viewport.render_scene(&game.scene);
+    if let (Some(vp), Some(game)) = (viewport, app.loader.current_game()) {
+        vp.render_scene(&game.scene);
         let img_widget = StatefulImage::default();
-        f.render_stateful_widget(img_widget, vp_inner, &mut viewport.image_state);
+        f.render_stateful_widget(img_widget, vp_inner, &mut vp.image_state);
+    } else {
+        f.render_widget(Paragraph::new("(no preview)"), vp_inner);
     }
 
     super::inspector::draw(f, middle[2], &app.inspector, app.focused == PanelId::Inspector);
@@ -107,7 +109,14 @@ pub fn draw(f: &mut Frame, app: &AppState, viewport: &mut Viewport) -> PanelArea
 
     super::project::draw(f, bottom[0], &app.project, app.focused == PanelId::Project);
 
-    super::terminal::draw(f, bottom[1], &app.terminal, app.focused == PanelId::Terminal);
+    if let Some(ref term) = app.terminal {
+        super::terminal::draw(f, bottom[1], term, app.focused == PanelId::Terminal);
+    } else {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title("Terminal");
+        f.render_widget(block, bottom[1]);
+    }
 
     PanelAreas {
         hierarchy: middle[0],

@@ -48,15 +48,16 @@ pub fn run(config: Config) -> anyhow::Result<()> {
     // Initial draw to determine actual panel sizes, then resize the PTY
     // before bash outputs anything meaningful.
     terminal.draw(|f| {
-        panel_areas = Some(layout::draw(f, &app, &mut viewport));
+        panel_areas = Some(layout::draw(f, &app, Some(&mut viewport)));
     })?;
     if let Some(ref areas) = panel_areas {
         let inner_h = areas.terminal.height.saturating_sub(2);
         let inner_w = areas.terminal.width.saturating_sub(2);
         if inner_h > 0 && inner_w > 0 {
-            app.terminal.resize(inner_h, inner_w);
-            // Clear screen so bash redraws at the correct size
-            app.terminal.send_key(b"\x0c");
+            if let Some(ref mut term) = app.terminal {
+                term.resize(inner_h, inner_w);
+                term.send_key(b"\x0c");
+            }
         }
     }
 
@@ -65,12 +66,14 @@ pub fn run(config: Config) -> anyhow::Result<()> {
             let inner_h = areas.terminal.height.saturating_sub(2);
             let inner_w = areas.terminal.width.saturating_sub(2);
             if inner_h > 0 && inner_w > 0 {
-                app.terminal.resize(inner_h, inner_w);
+                if let Some(ref mut term) = app.terminal {
+                    term.resize(inner_h, inner_w);
+                }
             }
         }
 
         terminal.draw(|f| {
-            panel_areas = Some(layout::draw(f, &app, &mut viewport));
+            panel_areas = Some(layout::draw(f, &app, Some(&mut viewport)));
         })?;
 
         if event::poll(Duration::from_millis(50))? {
@@ -81,7 +84,9 @@ pub fn run(config: Config) -> anyhow::Result<()> {
                     } else if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
                         app.save_scene();
                     } else if app.focused == PanelId::Terminal {
-                        send_key_to_pty(&mut app.terminal, &key);
+                        if let Some(ref mut term) = app.terminal {
+                            send_key_to_pty(term, &key);
+                        }
                     } else {
                         app.handle_key(key);
                     }

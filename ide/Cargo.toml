@@ -3,6 +3,10 @@ name = "ide"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "shinra_ide"
+path = "src/lib.rs"
+
 [[bin]]
 name = "ide"
 path = "src/main.rs"
