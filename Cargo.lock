@@ -3659,6 +3659,7 @@ dependencies = [
  "hecs",
  "image 0.24.9",
  "pollster 0.3.0",
+ "scene",
  "tobj",
  "viuer",
  "wgpu",

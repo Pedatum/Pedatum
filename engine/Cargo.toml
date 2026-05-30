@@ -18,3 +18,4 @@ crossterm = "0.27"
 anyhow = "1"
 gametok-abi = { path = "../abi" }
 hecs = "0.10"
+scene-format = { package = "scene", path = "../scene" }

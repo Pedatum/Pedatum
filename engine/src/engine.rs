@@ -19,6 +19,8 @@ pub struct Engine {
     // pointer is stable (no reuse by a different allocation).
     mesh_cache:
         HashMap<*const crate::mesh::Mesh, (Arc<crate::mesh::Mesh>, wgpu::Buffer, wgpu::Buffer)>,
+    readback_buf: Option<wgpu::Buffer>,
+    readback_pad_bytes_per_row: u32,
 }
 
 impl Engine {
@@ -159,6 +161,8 @@ impl Engine {
             object_bgl,
             object_slots: Vec::new(),
             mesh_cache: HashMap::new(),
+            readback_buf: None,
+            readback_pad_bytes_per_row: 0,
         }
     }
 
@@ -283,11 +287,28 @@ impl Engine {
         self.queue.submit([encoder.finish()]);
     }
 
+    pub fn ensure_readback_buffer(&mut self) {
+        if self.readback_buf.is_some() {
+            return;
+        }
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let unpadded = self.size.0 * 4;
+        let padded = unpadded.div_ceil(align) * align;
+        self.readback_pad_bytes_per_row = padded;
+        self.readback_buf = Some(self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback"),
+            size: (padded as u64) * (self.size.1 as u64),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        }));
+    }
+
     /// Reallocate color + depth textures at a new size.
     pub fn resize(&mut self, width: u32, height: u32) {
         self.color = Self::make_color(&self.device, width, height);
         self.depth = Self::make_depth(&self.device, width, height);
         self.size = (width, height);
+        self.readback_buf = None;
     }
 
     fn make_color(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Texture {
