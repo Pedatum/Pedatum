@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 
 /// Top-level type stored in `.scn.ron` or `scene.ron`. The optional `camera`
@@ -82,6 +84,21 @@ pub struct Tile {
     /// support; v2 can add `atlas: Option<String>` + `uv: Option<[u32; 4]>`
     /// without breaking existing files.
     pub color: [f32; 3],
+}
+
+impl Scene {
+    pub fn save(&self, path: &Path) -> anyhow::Result<()> {
+        let pretty = ron::ser::PrettyConfig::default().depth_limit(8);
+        let s = ron::ser::to_string_pretty(self, pretty)?;
+        std::fs::write(path, s)?;
+        Ok(())
+    }
+
+    pub fn load(path: &Path) -> anyhow::Result<Self> {
+        let raw = std::fs::read_to_string(path)?;
+        let scene: Scene = ron::from_str(&raw)?;
+        Ok(scene)
+    }
 }
 
 /// Generic component value attached to a Node. v1 supports a small fixed
@@ -236,5 +253,31 @@ mod tests {
             "components should be skipped: {s}"
         );
         assert!(!s.contains("children:"), "children should be skipped: {s}");
+    }
+
+    #[test]
+    fn save_load_roundtrip() {
+        let s1 = sample_scene();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        s1.save(tmp.path()).unwrap();
+        let s2 = Scene::load(tmp.path()).unwrap();
+        assert_eq!(s1, s2);
+    }
+
+    #[test]
+    fn save_creates_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test_scene.scn.ron");
+        let s = sample_scene();
+        s.save(&path).unwrap();
+        assert!(path.exists());
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let _: Scene = ron::from_str(&raw).unwrap();
+    }
+
+    #[test]
+    fn load_nonexistent_returns_error() {
+        let result = Scene::load(Path::new("/tmp/nonexistent_scene_12345.ron"));
+        assert!(result.is_err());
     }
 }
