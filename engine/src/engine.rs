@@ -367,6 +367,12 @@ impl Engine {
         image::RgbaImage::from_raw(w, h, pixels).expect("pixel buffer size mismatch")
     }
 
+    pub fn snapshot(&mut self, path: &std::path::Path) -> anyhow::Result<()> {
+        let img = self.frame_image();
+        img.save(path)?;
+        Ok(())
+    }
+
     /// Reallocate color + depth textures at a new size.
     pub fn resize(&mut self, width: u32, height: u32) {
         self.color = Self::make_color(&self.device, width, height);
@@ -573,5 +579,29 @@ mod tests {
     fn engine_pipeline() {
         let engine = Engine::new(64, 64);
         assert_eq!(engine.camera_buf.size(), 64);
+    }
+
+    #[test]
+    fn engine_snapshot() {
+        let mut engine = Engine::new(64, 64);
+        let scene = crate::scene::Scene::new(crate::scene::Camera {
+            eye: glam::Vec3::new(0.0, 0.0, 3.0),
+            target: glam::Vec3::ZERO,
+            up: glam::Vec3::Y,
+            projection: crate::scene::Projection::Perspective {
+                fov_y_radians: 60.0_f32.to_radians(),
+                aspect: 1.0,
+                znear: 0.1,
+                zfar: 100.0,
+            },
+        });
+        engine.render(&scene);
+        let path = std::env::temp_dir().join("shinra_snapshot_test.png");
+        engine.snapshot(&path).expect("snapshot should succeed");
+        assert!(path.exists(), "PNG file should be created");
+        let img = image::open(&path).expect("should open as valid image");
+        assert_eq!(img.width(), 64);
+        assert_eq!(img.height(), 64);
+        std::fs::remove_file(&path).ok();
     }
 }
