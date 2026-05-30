@@ -78,6 +78,8 @@ pub fn run(config: Config) -> anyhow::Result<()> {
                 Event::Key(key) => {
                     if let Some(action) = config.resolve_action(&key) {
                         handle_action(&mut app, action);
+                    } else if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                        app.save_scene();
                     } else if app.focused == PanelId::Terminal {
                         send_key_to_pty(&mut app.terminal, &key);
                     } else {

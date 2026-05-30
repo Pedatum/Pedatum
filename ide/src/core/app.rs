@@ -66,6 +66,15 @@ impl AppState {
         self.loader.current_game().map(|g| &g.scene)
     }
 
+    pub fn save_scene(&self) {
+        if let Some(game) = self.loader.current_game() {
+            let path = game.dir.join("scene.ron");
+            if let Err(e) = game.scene.save(&path) {
+                eprintln!("[ide] save failed: {e}");
+            }
+        }
+    }
+
     fn build_inspector(scene: Option<&Scene>, selected: Option<usize>) -> InspectorState {
         match (scene, selected) {
             (Some(s), Some(idx)) if idx < s.nodes.len() => {
