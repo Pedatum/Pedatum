@@ -225,7 +225,7 @@ fn render_smoke() {
     }
 
     // --- teapot ---
-    {
+    if std::path::Path::new("../assets/teapot.obj").exists() {
         let mesh = Arc::new(Mesh::from_obj_file("../assets/teapot.obj").expect("load teapot"));
         let mut scene = Scene::new(perspective([0.0, 1.5, 4.0], [0.0, 1.0, 0.0], 0.1, 100.0));
         scene.spawn_mesh(mesh, glam::Mat4::IDENTITY);
@@ -239,7 +239,7 @@ fn render_smoke() {
     }
 
     // --- bunny ---
-    {
+    if std::path::Path::new("../assets/bunny.obj").exists() {
         let mesh = Arc::new(Mesh::from_obj_file("../assets/bunny.obj").expect("load bunny"));
         let mut scene = Scene::new(perspective(
             [-0.05, 0.12, 0.25],

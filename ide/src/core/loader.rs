@@ -7,6 +7,7 @@ pub struct Loader {
     current: usize,
 }
 
+#[allow(dead_code)]
 pub struct GameEntry {
     pub name: String,
     pub dir: PathBuf,

@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+#[allow(dead_code)]
 pub struct FileEntry {
     pub name: String,
     pub path: PathBuf,

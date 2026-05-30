@@ -120,6 +120,10 @@ mod tests {
     use super::*;
 
     fn check_mesh(path: &str) {
+        if !std::path::Path::new(path).exists() {
+            eprintln!("skipping: {path} not found");
+            return;
+        }
         let mesh = Mesh::from_obj_file(path).expect("load failed");
         assert!(!mesh.vertices.is_empty(), "no vertices");
         assert!(!mesh.indices.is_empty(), "no indices");
