@@ -112,24 +112,19 @@ impl App {
     }
 
     fn open_scene(&mut self, path: &std::path::Path) {
-        match std::fs::read_to_string(path) {
-            Ok(s) => match ron::from_str::<scene::Scene>(&s) {
-                Ok(scene) => {
-                    self.push_undo();
-                    self.scene = scene;
-                    self.current_path = Some(path.to_path_buf());
-                    self.selected_node = None;
-                }
-                Err(e) => eprintln!("[editor] parse error: {e}"),
-            },
-            Err(e) => eprintln!("[editor] read error: {e}"),
+        match scene::Scene::load(path) {
+            Ok(scene) => {
+                self.push_undo();
+                self.scene = scene;
+                self.current_path = Some(path.to_path_buf());
+                self.selected_node = None;
+            }
+            Err(e) => eprintln!("[editor] open error: {e}"),
         }
     }
 
     fn save_scene(&mut self, path: &std::path::Path) {
-        let pretty = ron::ser::PrettyConfig::default().depth_limit(8);
-        let s = ron::ser::to_string_pretty(&self.scene, pretty).expect("serialize");
-        if let Err(e) = std::fs::write(path, s) {
+        if let Err(e) = self.scene.save(path) {
             eprintln!("[editor] write failed: {e}");
         } else {
             self.current_path = Some(path.to_path_buf());
@@ -269,6 +264,20 @@ impl eframe::App for App {
         });
         if undo_triggered {
             self.undo();
+        }
+
+        let save_triggered = ctx.input_mut(|i| {
+            i.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND,
+                egui::Key::S,
+            ))
+        });
+        if save_triggered {
+            if let Some(p) = self.current_path.clone() {
+                self.save_scene(&p);
+            } else {
+                self.save_as();
+            }
         }
     }
 }
