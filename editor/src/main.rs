@@ -1,6 +1,7 @@
 use eframe::egui;
 use egui_dock::{DockArea, DockState, NodeIndex, Style};
 use shinra_engine::engine::Engine;
+use shinra_engine::EngineBackend;
 
 const RENDER_W: u32 = 512;
 const RENDER_H: u32 = 384;
@@ -62,10 +63,10 @@ impl App {
             RENDER_H,
         );
 
-        let view = engine.color.create_view(&Default::default());
+        let view = engine.color_texture().create_view(&Default::default());
         let mut renderer = render_state.renderer.write();
         let viewport_texture_id =
-            renderer.register_native_texture(&engine.device, &view, wgpu::FilterMode::Linear);
+            renderer.register_native_texture(engine.device(), &view, wgpu::FilterMode::Linear);
 
         let mut dock = DockState::new(vec![PanelKind::Viewport]);
         let surface = dock.main_surface_mut();
