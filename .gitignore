@@ -13,4 +13,6 @@ tests/snapshots/
 .DS_Store
 .claude/
 vscode-ext/out/
+node_modules/
 vscode-ext/node_modules/
+dist/
