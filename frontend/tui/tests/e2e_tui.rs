@@ -1,8 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use shinra_ide::core::app::{AppState, PanelId};
-use shinra_ide::tui::layout;
+use shinra_tui::core::app::{AppState, PanelId};
+use shinra_tui::tui::layout;
 use std::path::{Path, PathBuf};
 
 fn snapshot_dir() -> PathBuf {

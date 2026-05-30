@@ -112,7 +112,7 @@ fn save_load_roundtrip_with_mutation() {
 }
 
 #[test]
-#[ignore] // requires GPU — run with: cargo test -p editor -- --ignored
+#[ignore] // requires GPU — run with: cargo test -p gui -- --ignored
 fn snapshot_before_mutation() {
     let scene = test_scene();
     let img = render_scene_to_image(&scene);
@@ -122,7 +122,7 @@ fn snapshot_before_mutation() {
 }
 
 #[test]
-#[ignore] // requires GPU — run with: cargo test -p editor -- --ignored
+#[ignore] // requires GPU — run with: cargo test -p gui -- --ignored
 fn snapshot_after_mutation() {
     let mut scene = test_scene();
     scene.nodes[0].transform.translation[0] += 1.0;
@@ -133,7 +133,7 @@ fn snapshot_after_mutation() {
 }
 
 #[test]
-#[ignore] // requires GPU + assets — run with: cargo test -p editor -- --ignored
+#[ignore] // requires GPU + assets — run with: cargo test -p gui -- --ignored
 fn before_and_after_differ() {
     if !Path::new("assets/bunny.obj").exists() {
         eprintln!("skipping before_and_after_differ: assets/bunny.obj not found");

@@ -1,5 +1,5 @@
-use shinra_ide::config;
-use shinra_ide::tui;
+use shinra_tui::config;
+use shinra_tui::tui;
 
 fn main() -> anyhow::Result<()> {
     // Redirect stderr to a log file so Mesa/EGL GPU driver warnings

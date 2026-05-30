@@ -1,19 +1,19 @@
 [package]
-name = "ide"
+name = "tui"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-name = "shinra_ide"
+name = "shinra_tui"
 path = "src/lib.rs"
 
 [[bin]]
-name = "ide"
+name = "tui"
 path = "src/main.rs"
 
 [dependencies]
-shinra-engine = { path = "../engine" }
-scene = { path = "../scene" }
+shinra-engine = { path = "../../engine" }
+scene = { path = "../../scene" }
 ratatui = "0.29"
 ratatui-image = { version = "5" }
 crossterm = "0.28"
