@@ -1,10 +1,6 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-
 use eframe::egui;
 use egui_dock::{DockArea, DockState, NodeIndex, Style};
 use shinra_engine::engine::Engine;
-use shinra_engine::mesh::Mesh;
 
 const RENDER_W: u32 = 512;
 const RENDER_H: u32 = 384;
@@ -49,8 +45,6 @@ struct App {
     tileset: scene::Tileset,
     tileset_path: String,
     brush_tile: Option<u32>,
-    quad_mesh: Arc<Mesh>,
-    mesh_cache: HashMap<String, Arc<Mesh>>,
     current_path: Option<std::path::PathBuf>,
     undo_stack: Vec<scene::Scene>,
 }
@@ -88,9 +82,6 @@ impl App {
             .and_then(|s| ron::from_str(&s).ok())
             .unwrap_or_default();
 
-        let quad_mesh =
-            Arc::new(Mesh::from_obj_file("assets/quad.obj").expect("assets/quad.obj missing"));
-
         let mut scene = scene::Scene::default();
         ensure_ground(&mut scene);
 
@@ -103,8 +94,6 @@ impl App {
             tileset,
             tileset_path: default_tileset_path,
             brush_tile: None,
-            quad_mesh,
-            mesh_cache: HashMap::new(),
             current_path: None,
             undo_stack: Vec::new(),
         }
@@ -204,37 +193,19 @@ fn world_to_cell(world: glam::Vec2, tile_size: [f32; 2]) -> (i32, i32) {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Build engine scene from editor scene (tilemap quads + mesh nodes).
-        let mut sc = shinra_engine::scene::Scene::new(camera());
-        for node in &self.scene.nodes {
-            if let Some(tilemap) = &node.tilemap {
-                for cell in &tilemap.cells {
-                    let model = glam::Mat4::from_translation(glam::Vec3::new(
-                        cell.x as f32 * tilemap.tile_size[0],
-                        0.0,
-                        cell.y as f32 * tilemap.tile_size[1],
-                    ));
-                    sc.spawn_mesh(Arc::clone(&self.quad_mesh), model);
-                }
-            }
-            if let Some(mesh_ref) = &node.mesh {
-                if !self.mesh_cache.contains_key(&mesh_ref.path) {
-                    if let Ok(m) = Mesh::from_obj_file(&mesh_ref.path) {
-                        self.mesh_cache.insert(mesh_ref.path.clone(), Arc::new(m));
-                    }
-                }
-                if let Some(mesh) = self.mesh_cache.get(&mesh_ref.path) {
-                    let t = &node.transform;
-                    let model = glam::Mat4::from_scale_rotation_translation(
-                        glam::Vec3::from(t.scale),
-                        glam::Quat::from_array(t.rotation),
-                        glam::Vec3::from(t.translation),
-                    );
-                    sc.spawn_mesh(Arc::clone(mesh), model);
-                }
-            }
-        }
-        self.engine.render(&sc);
+        self.scene.camera = Some(scene::Camera {
+            eye: [0.0, 10.0, 0.0],
+            target: [0.0, 0.0, 0.0],
+            up: [0.0, 0.0, 1.0],
+            projection: scene::Projection::Orthographic {
+                half_height: 5.0,
+                aspect: RENDER_W as f32 / RENDER_H as f32,
+                znear: 0.1,
+                zfar: 100.0,
+            },
+        });
+        self.engine.load_scene(&self.scene);
+        self.engine.render_current();
 
         egui::TopBottomPanel::top("menu").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
