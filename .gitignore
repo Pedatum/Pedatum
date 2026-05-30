@@ -4,6 +4,8 @@ Cargo.lock
 *.patch
 
 target/
+tests/snapshots/
+*.png
 .tmp/
 /.browser/
 *.swp

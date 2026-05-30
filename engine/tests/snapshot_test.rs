@@ -1,5 +1,12 @@
 use shinra_engine::engine::Engine;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+fn snapshot_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("tests/snapshots")
+}
 
 fn render_scene_to_png(scene_path: &str, output: &str, width: u32, height: u32) {
     let scene_data = std::fs::read_to_string(scene_path).unwrap();
@@ -81,7 +88,7 @@ fn snapshot_cube_matches_baseline() {
     render_scene_to_png("tests/fixtures/cube.ron", "cube_baseline_check.png", 256, 144);
 
     let actual = Path::new("target/debug/snapshots/cube_baseline_check.png");
-    let baseline = Path::new("tests/snapshots/cube_256x144.png");
+    let baseline = snapshot_dir().join("cube/initial.engine.png");
 
-    check_or_update_snapshot(actual, baseline, 2);
+    check_or_update_snapshot(actual, &baseline, 2);
 }

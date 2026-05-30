@@ -1,5 +1,12 @@
 use scene;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+fn snapshot_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("tests/snapshots")
+}
 
 const RENDER_W: u32 = 256;
 const RENDER_H: u32 = 192;
@@ -110,8 +117,8 @@ fn snapshot_before_mutation() {
     let scene = test_scene();
     let img = render_scene_to_image(&scene);
 
-    let baseline = Path::new("tests/snapshots/before_mutation.png");
-    check_or_update_png_snapshot(&img, baseline);
+    let baseline = snapshot_dir().join("bunny/initial.gui.png");
+    check_or_update_png_snapshot(&img, &baseline);
 }
 
 #[test]
@@ -121,8 +128,8 @@ fn snapshot_after_mutation() {
     scene.nodes[0].transform.translation[0] += 1.0;
     let img = render_scene_to_image(&scene);
 
-    let baseline = Path::new("tests/snapshots/after_mutation.png");
-    check_or_update_png_snapshot(&img, baseline);
+    let baseline = snapshot_dir().join("bunny/after-move-x.gui.png");
+    check_or_update_png_snapshot(&img, &baseline);
 }
 
 #[test]

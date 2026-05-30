@@ -3,7 +3,14 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use shinra_ide::core::app::{AppState, PanelId};
 use shinra_ide::tui::layout;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+fn snapshot_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("tests/snapshots")
+}
 
 const TERM_W: u16 = 120;
 const TERM_H: u16 = 40;
@@ -130,8 +137,8 @@ fn snapshot_initial_layout() {
     let (app, _, _tmp) = make_app();
     let snapshot = render_snapshot(&app);
 
-    let baseline = Path::new("tests/snapshots/initial_layout.txt");
-    check_or_update_txt_snapshot(&snapshot, baseline);
+    let baseline = snapshot_dir().join("bunny/initial.tui.txt");
+    check_or_update_txt_snapshot(&snapshot, &baseline);
 }
 
 #[test]
@@ -143,8 +150,8 @@ fn snapshot_after_select_node() {
 
     let snapshot = render_snapshot(&app);
 
-    let baseline = Path::new("tests/snapshots/after_select_node.txt");
-    check_or_update_txt_snapshot(&snapshot, baseline);
+    let baseline = snapshot_dir().join("bunny/after-select-node.tui.txt");
+    check_or_update_txt_snapshot(&snapshot, &baseline);
 }
 
 #[test]
@@ -159,8 +166,8 @@ fn snapshot_after_adjust_x() {
 
     let snapshot = render_snapshot(&app);
 
-    let baseline = Path::new("tests/snapshots/after_adjust_x.txt");
-    check_or_update_txt_snapshot(&snapshot, baseline);
+    let baseline = snapshot_dir().join("bunny/after-move-x.tui.txt");
+    check_or_update_txt_snapshot(&snapshot, &baseline);
 }
 
 // -- Persistence test (still needs the scene.ron roundtrip assertion) --
