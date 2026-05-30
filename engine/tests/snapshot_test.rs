@@ -14,6 +14,20 @@ fn render_scene_to_png(scene_path: &str, output: &str, width: u32, height: u32) 
     engine.snapshot(&out_dir.join(output)).unwrap();
 }
 
+fn check_or_update_snapshot(actual: &Path, baseline: &Path, tolerance: u8) {
+    if std::env::var("UPDATE_SNAPSHOTS").is_ok() {
+        std::fs::create_dir_all(baseline.parent().unwrap()).unwrap();
+        std::fs::copy(actual, baseline).unwrap();
+        return;
+    }
+    assert!(
+        compare_snapshots(actual, baseline, tolerance),
+        "Snapshot mismatch: {} vs {}",
+        actual.display(),
+        baseline.display()
+    );
+}
+
 fn compare_snapshots(actual: &Path, expected: &Path, tolerance: u8) -> bool {
     let actual_img = image::open(actual).unwrap().to_rgba8();
     let expected_img = image::open(expected).unwrap().to_rgba8();
@@ -67,21 +81,7 @@ fn snapshot_cube_matches_baseline() {
     render_scene_to_png("tests/fixtures/cube.ron", "cube_baseline_check.png", 256, 144);
 
     let actual = Path::new("target/debug/snapshots/cube_baseline_check.png");
-    let expected = Path::new("tests/snapshots/cube_256x144.png");
+    let baseline = Path::new("tests/snapshots/cube_256x144.png");
 
-    assert!(
-        compare_snapshots(actual, expected, 2),
-        "cube render differs from baseline beyond tolerance"
-    );
-}
-
-#[test]
-fn snapshot_update_baselines() {
-    if std::env::var("UPDATE_SNAPSHOTS").is_err() {
-        return;
-    }
-    render_scene_to_png("tests/fixtures/cube.ron", "cube_update.png", 256, 144);
-    let src = Path::new("target/debug/snapshots/cube_update.png");
-    let dst = Path::new("tests/snapshots/cube_256x144.png");
-    std::fs::copy(src, dst).unwrap();
+    check_or_update_snapshot(actual, baseline, 2);
 }
