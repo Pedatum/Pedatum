@@ -3,6 +3,10 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use shinra_ide::core::app::{AppState, PanelId};
 use shinra_ide::tui::layout;
+use std::path::Path;
+
+const TERM_W: u16 = 120;
+const TERM_H: u16 = 40;
 
 fn buffer_to_text(backend: &TestBackend) -> String {
     let buf = backend.buffer();
@@ -18,6 +22,73 @@ fn buffer_to_text(backend: &TestBackend) -> String {
         lines.pop();
     }
     lines.join("\n")
+}
+
+fn check_or_update_txt_snapshot(actual: &str, baseline_path: &Path) {
+    if std::env::var("UPDATE_SNAPSHOTS").is_ok() {
+        std::fs::create_dir_all(baseline_path.parent().unwrap()).unwrap();
+        std::fs::write(baseline_path, actual).unwrap();
+        return;
+    }
+    let expected = std::fs::read_to_string(baseline_path).unwrap_or_else(|_| {
+        panic!(
+            "Baseline not found: {}. Run with UPDATE_SNAPSHOTS=1 to create it.",
+            baseline_path.display()
+        )
+    });
+    if actual != expected {
+        // Find first differing line for a useful error message
+        let actual_lines: Vec<&str> = actual.lines().collect();
+        let expected_lines: Vec<&str> = expected.lines().collect();
+        let mut diff_line = None;
+        for (i, (a, e)) in actual_lines.iter().zip(expected_lines.iter()).enumerate() {
+            if a != e {
+                diff_line = Some((i + 1, *a, *e));
+                break;
+            }
+        }
+        if diff_line.is_none() && actual_lines.len() != expected_lines.len() {
+            diff_line = Some((
+                actual_lines.len().min(expected_lines.len()) + 1,
+                actual_lines
+                    .get(expected_lines.len())
+                    .or(Some(&"<missing>"))
+                    .unwrap(),
+                expected_lines
+                    .get(actual_lines.len())
+                    .or(Some(&"<missing>"))
+                    .unwrap(),
+            ));
+        }
+        match diff_line {
+            Some((line, actual_text, expected_text)) => {
+                panic!(
+                    "Snapshot mismatch at {}, line {}:\n  actual:   {:?}\n  expected: {:?}\nRun with UPDATE_SNAPSHOTS=1 to update.",
+                    baseline_path.display(),
+                    line,
+                    actual_text,
+                    expected_text
+                );
+            }
+            None => {
+                panic!(
+                    "Snapshot mismatch at {} (content differs)\nRun with UPDATE_SNAPSHOTS=1 to update.",
+                    baseline_path.display()
+                );
+            }
+        }
+    }
+}
+
+fn render_snapshot(app: &AppState) -> String {
+    let backend = TestBackend::new(TERM_W, TERM_H);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| {
+            layout::draw(f, app, None);
+        })
+        .unwrap();
+    buffer_to_text(terminal.backend())
 }
 
 fn key(code: KeyCode) -> KeyEvent {
@@ -43,107 +114,72 @@ fn write_test_scene(dir: &std::path::Path) {
     scene.save(&dir.join("scene.ron")).unwrap();
 }
 
-#[test]
-fn adjust_and_save_persists_to_disk() {
+fn make_app() -> (AppState, std::path::PathBuf, tempfile::TempDir) {
     let tmp = tempfile::tempdir().unwrap();
     let game_dir = tmp.path().join("game1");
     std::fs::create_dir(&game_dir).unwrap();
     write_test_scene(&game_dir);
+    let app = AppState::new_headless(tmp.path()).unwrap();
+    (app, game_dir, tmp)
+}
 
-    let mut app = AppState::new_headless(tmp.path()).unwrap();
+// -- Snapshot tests --
 
-    // Focus hierarchy, select the node
+#[test]
+fn snapshot_initial_layout() {
+    let (app, _, _tmp) = make_app();
+    let snapshot = render_snapshot(&app);
+
+    let baseline = Path::new("tests/snapshots/initial_layout.txt");
+    check_or_update_txt_snapshot(&snapshot, baseline);
+}
+
+#[test]
+fn snapshot_after_select_node() {
+    let (mut app, _, _tmp) = make_app();
+
     app.focused = PanelId::Hierarchy;
     app.handle_key(key(KeyCode::Down));
 
-    // Focus inspector, enter edit mode, adjust X by +0.1
+    let snapshot = render_snapshot(&app);
+
+    let baseline = Path::new("tests/snapshots/after_select_node.txt");
+    check_or_update_txt_snapshot(&snapshot, baseline);
+}
+
+#[test]
+fn snapshot_after_adjust_x() {
+    let (mut app, _, _tmp) = make_app();
+
+    app.focused = PanelId::Hierarchy;
+    app.handle_key(key(KeyCode::Down));
     app.focused = PanelId::Inspector;
     app.handle_key(key(KeyCode::Char('e')));
     app.handle_key(key(KeyCode::Char('+')));
 
-    // Save
+    let snapshot = render_snapshot(&app);
+
+    let baseline = Path::new("tests/snapshots/after_adjust_x.txt");
+    check_or_update_txt_snapshot(&snapshot, baseline);
+}
+
+// -- Persistence test (still needs the scene.ron roundtrip assertion) --
+
+#[test]
+fn adjust_and_save_persists_to_disk() {
+    let (mut app, game_dir, _tmp) = make_app();
+
+    app.focused = PanelId::Hierarchy;
+    app.handle_key(key(KeyCode::Down));
+    app.focused = PanelId::Inspector;
+    app.handle_key(key(KeyCode::Char('e')));
+    app.handle_key(key(KeyCode::Char('+')));
     app.save_scene();
 
-    // Read back and verify
-    let scene_path = game_dir.join("scene.ron");
-    let loaded = scene::Scene::load(&scene_path).unwrap();
+    let loaded = scene::Scene::load(&game_dir.join("scene.ron")).unwrap();
     let x = loaded.nodes[0].transform.translation[0];
     assert!(
         (x - 0.1).abs() < 1e-6,
         "expected translation X ~0.1, got {x}"
-    );
-}
-
-#[test]
-fn full_layout_snapshot() {
-    let tmp = tempfile::tempdir().unwrap();
-    let game_dir = tmp.path().join("game1");
-    std::fs::create_dir(&game_dir).unwrap();
-    write_test_scene(&game_dir);
-
-    let app = AppState::new_headless(tmp.path()).unwrap();
-
-    let backend = TestBackend::new(120, 40);
-    let mut terminal = Terminal::new(backend).unwrap();
-    terminal
-        .draw(|f| {
-            layout::draw(f, &app, None);
-        })
-        .unwrap();
-
-    let snapshot = buffer_to_text(terminal.backend());
-
-    // All 6 panel areas should be present in the layout
-    assert!(snapshot.contains("Hierarchy"), "missing Hierarchy panel");
-    assert!(snapshot.contains("Viewport"), "missing Viewport panel");
-    assert!(snapshot.contains("Inspector"), "missing Inspector panel");
-    assert!(snapshot.contains("Project"), "missing Project panel");
-    assert!(snapshot.contains("Terminal"), "missing Terminal panel");
-    assert!(snapshot.contains("File"), "missing menu bar");
-
-    // Verify the snapshot has reasonable dimensions
-    let line_count = snapshot.lines().count();
-    assert!(
-        line_count >= 30,
-        "snapshot too short: {line_count} lines (expected ~40)"
-    );
-}
-
-#[test]
-fn snapshot_shows_inspector_values_after_edit() {
-    let tmp = tempfile::tempdir().unwrap();
-    let game_dir = tmp.path().join("game1");
-    std::fs::create_dir(&game_dir).unwrap();
-    write_test_scene(&game_dir);
-
-    let mut app = AppState::new_headless(tmp.path()).unwrap();
-
-    // Select node and adjust X
-    app.focused = PanelId::Hierarchy;
-    app.handle_key(key(KeyCode::Down));
-    app.focused = PanelId::Inspector;
-    app.handle_key(key(KeyCode::Char('e')));
-    app.handle_key(key(KeyCode::Char('+')));
-
-    let backend = TestBackend::new(120, 40);
-    let mut terminal = Terminal::new(backend).unwrap();
-    terminal
-        .draw(|f| {
-            layout::draw(f, &app, None);
-        })
-        .unwrap();
-
-    let snapshot = buffer_to_text(terminal.backend());
-
-    // Inspector should show the updated X value (0.100)
-    assert!(
-        snapshot.contains("0.100"),
-        "inspector should show adjusted X value 0.100 in snapshot:\n{snapshot}"
-    );
-
-    // Node name should appear
-    assert!(
-        snapshot.contains("player"),
-        "inspector should show node name 'player'"
     );
 }

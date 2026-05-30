@@ -999,6 +999,7 @@ dependencies = [
  "egui-wgpu",
  "egui_dock",
  "glam",
+ "image",
  "rfd",
  "ron",
  "scene",
