@@ -126,6 +126,7 @@ mod tests {
     fn sample_scene() -> Scene {
         Scene {
             name: "town".into(),
+            camera: None,
             nodes: vec![
                 Node {
                     name: "ground".into(),

@@ -1,0 +1,11 @@
+(
+    mode: Tui,
+    keybindings: {
+        "ctrl+h": "focus_hierarchy",
+        "ctrl+v": "focus_viewport",
+        "ctrl+i": "focus_inspector",
+        "ctrl+f": "focus_project",
+        "ctrl+t": "focus_terminal",
+        "q": "quit",
+    },
+)

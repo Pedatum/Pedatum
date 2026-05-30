@@ -1,13 +1,13 @@
 # shinra-engine-core
 
-The Rust + wgpu game engine plus its tooling: render core, scene types, two
-front-ends (`runner` for terminal, `editor` / `editor-server` + VS Code
-extension for the GUI viewport), and the build infrastructure for games.
+The Rust + wgpu game engine plus its tooling: render core, scene types,
+front-ends (`runner` for terminal, `ide` for TUI, `editor` for native GUI),
+and the build infrastructure for games.
 
 Game **data** lives in a separate project (e.g.
 [`shinra-examples`](../shinra-examples/)) — a folder per game holding
-`scene.ron` + `tscn.ron`. The editor-server scans that folder, renders the
-selected game, and **`n`** in the viewport cycles to the next.
+`scene.ron` + `tscn.ron`. The TUI IDE loads scene files, renders in-terminal,
+and **`n`** in the viewport cycles to the next.
 
 ## Two coexisting game models
 
@@ -16,7 +16,7 @@ unified, not maintained in parallel forever.
 
 | Model | Lives in | Loader | Status |
 |---|---|---|---|
-| **scene-based** (data) | `<project>/assets/games/<name>/{scene.ron,tscn.ron}` | `editor-server` (working) | Current direction. |
+| **scene-based** (data) | `<project>/assets/games/<name>/{scene.ron,tscn.ron}` | `ide` / `editor` (working) | Current direction. |
 | **cdylib** (code) | `<project>/games/<name>/` Rust crate, compiled to `libgame*.so` via `.hom` DSL → `homunc` → rustc | `runner` (`target/debug/libgame*.so`) | Legacy. The build infra (`hom_hecs` runtime, `homunc` integration, build.rs templates) belongs in this repo so projects don't carry it; see "Roadmap" below. |
 
 We call the architecture **gametok**: TikTok-style swipe between games. `n`
@@ -24,95 +24,94 @@ is consumed by the loader, never seen by the game.
 
 ## Prerequisites (Ubuntu / Debian, only if building natively)
 
-If you only run the editor-server through Docker (the recommended path), you
-don't need any of this on the host. For native builds:
+For native builds:
 
 ```bash
 # Rust toolchain — current stable (1.88+ required by wgpu 27)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
 . "$HOME/.cargo/env"
 
-# C/C++ toolchain + openh264 build deps (needed by editor-server)
+# C/C++ toolchain
 sudo apt install -y build-essential cmake nasm pkg-config
 
-# Vulkan runtime for headless wgpu rendering (editor-server / editor)
+# Vulkan runtime for headless wgpu rendering (ide / editor)
 sudo apt install -y mesa-vulkan-drivers libvulkan1 vulkan-tools
-
-# Node.js 20+ (only needed to package the VS Code extension in vscode-ext/)
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
 ```
 
 ## Run natively
 
 ```bash
-cargo build                        # builds engine, scene, runner, editor, editor-server
-cargo run -p editor-server         # HTTP :5812 + WS :5813 (H.264 stream)
+cargo build                        # builds engine, scene, runner, editor, ide
+cargo run -p ide                   # TUI IDE (ratatui, runs in terminal)
 cargo run -p editor                # native egui editor
 cargo run -p runner                # terminal mode; cycles libgame*.so in target/debug
 ```
 
-The editor-server resolves asset paths relative to its current working
-directory, so run it from inside a game project (or use Docker, which mounts
-the project at `/game`).
+Run from inside a game project directory (e.g. `shinra-examples/`) so the IDE
+can find `assets/games/`.
 
-## Build the editor-server Docker image
+## TUI IDE
 
-The editor-server is the entry point for VS Code's viewport. Game projects
-launch it via their own `docker-compose.yml` (which bind-mounts the project
-as `/game` and this repo as `/engine-core`). Two images are available:
-
-- **`Dockerfile`** (dev) — keeps the full Rust toolchain inside the
-  container. `cargo run -p editor-server` runs at container start against the
-  source mounted at `/engine-core`, so engine edits rebuild on
-  `docker compose up` without rebuilding the image.
-  ```bash
-  docker build -t shinra-editor-server .
-  ```
-- **`Dockerfile.release`** (slim) — multi-stage build that bakes the release
-  binary into a `debian:bookworm-slim` runtime. Smaller image, faster start,
-  but engine source changes require an image rebuild.
-  ```bash
-  docker build -f Dockerfile.release -t shinra-editor-server .
-  ```
-
-Both images use Rust **1.88-bookworm** (required by wgpu 27 and the
-edition-2024 crates in `Cargo.lock`), set `WORKDIR /game`, and ship
-`mesa-vulkan-drivers` so wgpu renders headlessly via lavapipe with no GPU.
-
-`shinra-examples/docker-compose.yml` references the image by name and works
-with either build.
-
-## VS Code extension (live viewport)
-
-`editor-server` exposes the rendered scene as an H.264 WebSocket stream that
-the extension in `vscode-ext/` decodes inside a VS Code webview.
+The TUI IDE (`ide` crate) is a single Rust binary that replaces the former
+editor-server + VS Code extension stack. One process, one language, zero
+network. Works over SSH, in tmux, headless.
 
 ```bash
-cd vscode-ext
-npm install
-npm run compile                    # tsc → out/extension.js
+cd ../shinra-examples              # or any game project with assets/games/
+cargo run -p ide
 ```
 
-Then either:
+### Layout
 
-- **Dev (Extension Development Host):** `code vscode-ext`, press **F5**. A
-  second VS Code window opens with the extension loaded. Run
-  `Ctrl+Shift+P` → **Shinra: Open Viewport**.
-- **Permanent install:**
-  ```bash
-  npm run package                              # produces shinra-editor-*.vsix
-  code --install-extension shinra-editor-*.vsix
-  ```
+```
++-----------------------------------------------------------------------+
+|  File  Edit  View  Run                                     [Mem: 12MB]|
++-----------------------+-------------------------------+---------------+
+| Hierarchy             | Viewport                      | Inspector     |
+|                       |                               |               |
+| > Main Camera         |     [ Player ]                | Name: Player  |
+| > Player              |                               | Position:     |
+|                       |         [ Enemy ]             |   X: 10.0     |
+|                       |                               |   Y: 5.0      |
++-----------------------+-------------------------------+---------------+
+| Project Browser       | Terminal / Console                            |
+| assets/               | [INFO] Engine initialized.                    |
++-----------------------+-----------------------------------------------+
+```
 
-`editor-server` must already be running (Docker or native) — the extension is
-just a viewer/client talking to `:5812` (HTTP scene API) and `:5813` (WS
-frame stream).
+Five panels: Hierarchy (scene tree), Viewport (wgpu render via
+ratatui-image), Inspector (selected node properties), Project Browser
+(file tree), and Terminal/Console (log output).
 
-| Key (in the viewport) | Action |
-|---|---|
-| Arrow keys | move node 0 in screen-X / screen-Y |
-| **n** | cycle to next game |
+### Default keybindings
+
+| Key     | Action               |
+|---------|----------------------|
+| Ctrl+H  | focus Hierarchy      |
+| Ctrl+V  | focus Viewport       |
+| Ctrl+I  | focus Inspector      |
+| Ctrl+F  | focus Project browser|
+| Ctrl+T  | focus Terminal       |
+| q       | quit                 |
+| n       | cycle to next game   |
+
+### Configuration
+
+Keybindings are configurable via `ide.ron` in the working directory:
+
+```ron
+(
+    mode: Tui,
+    keybindings: {
+        "ctrl+h": "focus_hierarchy",
+        "ctrl+v": "focus_viewport",
+        "ctrl+i": "focus_inspector",
+        "ctrl+f": "focus_project",
+        "ctrl+t": "focus_terminal",
+        "q": "quit",
+    },
+)
+```
 
 ## Workspace layout
 
@@ -123,8 +122,7 @@ shinra-engine-core/
 ├── scene/          serde scene + camera types (scene.ron / tscn.ron)
 ├── runner/         terminal binary; dlopen + render loop + n-swipe
 ├── editor/         native egui editor (eframe + wgpu)
-├── editor-server/  HTTP :5812 + WS :5813 H.264 stream — scene-based loader
-├── vscode-ext/     VS Code extension (decodes the H.264 stream)
+├── ide/            TUI IDE — ratatui 6-panel layout, wgpu offscreen render
 ├── Dockerfile      dev image (cargo at container start)
 └── Dockerfile.release  slim multi-stage runtime image
 ```
@@ -175,6 +173,5 @@ ls target/debug/smoke/      # cube.png teapot.png bunny.png — sanity render ou
 
 ## Status
 
-POC complete: the editor-server cycles scene-based games (`game1` bunny,
-`game2` teapot) over the H.264 WS stream consumed by the VS Code extension.
-The native runner still loads cdylib `.so` files only.
+POC complete: the TUI IDE loads and renders scene-based games in-terminal
+via ratatui-image. The native runner still loads cdylib `.so` files only.
