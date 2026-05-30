@@ -19,3 +19,6 @@ anyhow = "1"
 gametok-abi = { path = "../abi" }
 hecs = "0.10"
 scene-format = { package = "scene", path = "../scene" }
+
+[dev-dependencies]
+ron = "0.10"
