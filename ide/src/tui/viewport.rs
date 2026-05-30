@@ -1,4 +1,4 @@
-use image::{DynamicImage, RgbaImage};
+use image::DynamicImage;
 use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
 use shinra_engine::engine::Engine;
@@ -31,9 +31,7 @@ impl Viewport {
     pub fn render_scene(&mut self, scene_data: &scene::Scene) {
         self.engine.load_scene(scene_data);
         self.engine.render_current();
-        let (w, h) = self.engine.size();
-        let rgba = self.engine.frame_rgba();
-        let img = RgbaImage::from_raw(w, h, rgba).unwrap();
+        let img = self.engine.frame_image();
         self.image_state = self
             .picker
             .new_resize_protocol(DynamicImage::ImageRgba8(img));
