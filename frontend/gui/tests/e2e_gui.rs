@@ -15,24 +15,24 @@ fn test_scene() -> scene::Scene {
     scene::Scene {
         name: "test".into(),
         camera: Some(scene::Camera {
-            eye: [0.0, 0.5, 2.0],
+            eye: [2.0, 2.0, 2.0],
             target: [0.0, 0.0, 0.0],
             up: [0.0, 1.0, 0.0],
             projection: scene::Projection::Perspective {
                 fov_y_degrees: 60.0,
                 aspect: RENDER_W as f32 / RENDER_H as f32,
-                znear: 0.01,
-                zfar: 10.0,
+                znear: 0.1,
+                zfar: 100.0,
             },
         }),
         nodes: vec![scene::Node {
-            name: "player".into(),
+            name: "cube".into(),
             transform: scene::Transform {
                 translation: [0.0, 0.0, 0.0],
                 ..Default::default()
             },
             mesh: Some(scene::MeshRef {
-                path: "assets/bunny.obj".into(),
+                path: "../../engine/tests/fixtures/cube.obj".into(),
             }),
             ..Default::default()
         }],
@@ -108,11 +108,10 @@ fn save_load_roundtrip_with_mutation() {
     let loaded = scene::Scene::load(&path).unwrap();
 
     assert_eq!(loaded.nodes[0].transform.translation[0], 1.0);
-    assert_eq!(loaded.nodes[0].name, "player");
+    assert_eq!(loaded.nodes[0].name, "cube");
 }
 
 #[test]
-#[ignore] // requires GPU — run with: cargo test -p gui -- --ignored
 fn snapshot_before_mutation() {
     let scene = test_scene();
     let img = render_scene_to_image(&scene);
@@ -122,7 +121,6 @@ fn snapshot_before_mutation() {
 }
 
 #[test]
-#[ignore] // requires GPU — run with: cargo test -p gui -- --ignored
 fn snapshot_after_mutation() {
     let mut scene = test_scene();
     scene.nodes[0].transform.translation[0] += 1.0;
@@ -133,10 +131,9 @@ fn snapshot_after_mutation() {
 }
 
 #[test]
-#[ignore] // requires GPU + assets — run with: cargo test -p gui -- --ignored
 fn before_and_after_differ() {
-    if !Path::new("assets/bunny.obj").exists() {
-        eprintln!("skipping before_and_after_differ: assets/bunny.obj not found");
+    if !Path::new("../../engine/tests/fixtures/cube.obj").exists() {
+        eprintln!("skipping before_and_after_differ: cube.obj not found");
         return;
     }
 
