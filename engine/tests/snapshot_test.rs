@@ -14,6 +14,31 @@ fn render_scene_to_png(scene_path: &str, output: &str, width: u32, height: u32) 
     engine.snapshot(&out_dir.join(output)).unwrap();
 }
 
+fn compare_snapshots(actual: &Path, expected: &Path, tolerance: u8) -> bool {
+    let actual_img = image::open(actual).unwrap().to_rgba8();
+    let expected_img = image::open(expected).unwrap().to_rgba8();
+
+    assert_eq!(
+        actual_img.dimensions(),
+        expected_img.dimensions(),
+        "size mismatch"
+    );
+
+    let (w, h) = actual_img.dimensions();
+    let mut max_diff: u8 = 0;
+    for y in 0..h {
+        for x in 0..w {
+            let a = actual_img.get_pixel(x, y);
+            let e = expected_img.get_pixel(x, y);
+            for c in 0..4 {
+                let diff = (a[c] as i16 - e[c] as i16).unsigned_abs() as u8;
+                max_diff = max_diff.max(diff);
+            }
+        }
+    }
+    max_diff <= tolerance
+}
+
 #[test]
 fn snapshot_cube_scene() {
     render_scene_to_png("tests/fixtures/cube.ron", "cube_snapshot.png", 256, 144);
@@ -22,4 +47,17 @@ fn snapshot_cube_scene() {
     let img = image::open(path).unwrap();
     assert_eq!(img.width(), 256);
     assert_eq!(img.height(), 144);
+}
+
+#[test]
+fn snapshot_compare_identical() {
+    render_scene_to_png("tests/fixtures/cube.ron", "cube_cmp_a.png", 256, 144);
+    render_scene_to_png("tests/fixtures/cube.ron", "cube_cmp_b.png", 256, 144);
+
+    let dir = Path::new("target/debug/snapshots");
+    assert!(compare_snapshots(
+        &dir.join("cube_cmp_a.png"),
+        &dir.join("cube_cmp_b.png"),
+        2
+    ));
 }
