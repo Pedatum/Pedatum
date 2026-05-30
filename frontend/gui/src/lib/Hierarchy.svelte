@@ -1,21 +1,17 @@
 <script lang="ts">
-  import { scene, selectedNodeIndex } from "./store.svelte.ts";
-
-  function selectNode(index: number) {
-    selectedNodeIndex = index;
-  }
+  import { app } from "./store.svelte.ts";
 </script>
 
 <div class="panel" data-testid="hierarchy-panel">
   <div class="panel-header">Hierarchy</div>
   <div class="panel-content">
-    {#each scene.nodes as node, i}
+    {#each app.scene.nodes as node, i}
       <div
         class="tree-item"
-        class:selected={selectedNodeIndex === i}
+        class:selected={app.selectedNodeIndex === i}
         data-testid="hierarchy-node-{i}"
-        onclick={() => selectNode(i)}
-        onkeydown={(e) => e.key === "Enter" && selectNode(i)}
+        onclick={() => app.selectNode(i)}
+        onkeydown={(e) => e.key === "Enter" && app.selectNode(i)}
         role="button"
         tabindex="0"
       >

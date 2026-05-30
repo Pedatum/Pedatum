@@ -46,23 +46,35 @@ function defaultScene(): Scene {
   };
 }
 
-export let scene = $state<Scene>(defaultScene());
-export let selectedNodeIndex = $state<number>(0);
+class AppState {
+  scene = $state<Scene>(defaultScene());
+  selectedNodeIndex = $state<number>(0);
 
-export async function loadScene(path: string): Promise<void> {
-  try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    scene = await invoke<Scene>("load_scene", { path });
-  } catch {
-    console.log("Tauri not available, using default scene");
+  get selectedNode(): SceneNode | undefined {
+    return this.scene.nodes[this.selectedNodeIndex];
+  }
+
+  selectNode(index: number) {
+    this.selectedNodeIndex = index;
+  }
+
+  async loadScene(path: string): Promise<void> {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      this.scene = await invoke<Scene>("load_scene", { path });
+    } catch {
+      console.log("Tauri not available, using default scene");
+    }
+  }
+
+  async saveScene(path: string): Promise<void> {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("save_scene", { scene: this.scene, path });
+    } catch {
+      console.log("Tauri not available, save skipped");
+    }
   }
 }
 
-export async function saveScene(path: string): Promise<void> {
-  try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("save_scene", { scene, path });
-  } catch {
-    console.log("Tauri not available, save skipped");
-  }
-}
+export const app = new AppState();

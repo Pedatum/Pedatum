@@ -6,8 +6,6 @@
   import Inspector from "./lib/Inspector.svelte";
   import Terminal from "./lib/Terminal.svelte";
   import Console from "./lib/Console.svelte";
-
-  import { scene, selectedNodeIndex, loadScene, saveScene } from "./lib/store.svelte.ts";
 </script>
 
 <div class="ide-layout" data-testid="ide-layout">

@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { scene, selectedNodeIndex } from "./store.svelte.ts";
+  import { app } from "./store.svelte.ts";
 
-  let node = $derived(scene.nodes[selectedNodeIndex]);
+  let node = $derived(app.selectedNode);
 </script>
 
 <div class="panel" data-testid="inspector-panel">

@@ -1,0 +1,43 @@
+services:
+  gui:
+    build:
+      context: ./frontend/gui
+      network: host
+    ports:
+      - "1420:1420"
+    command: npm run dev -- --host 0.0.0.0
+    tty: true
+    stdin_open: true
+    volumes:
+      - ./frontend/gui:/app
+      - /app/node_modules
+
+  e2e:
+    profiles:
+      - test
+    build:
+      context: ./frontend/gui/e2e
+      network: host
+    volumes:
+      - ./frontend/gui/e2e/tests:/tests/tests
+      - ./.browser:/output
+    environment:
+      BASE_URL: http://gui:1420
+    depends_on:
+      - gui
+
+  # Rust workspace tests (engine, scene, tui, abi)
+  rust-test:
+    profiles:
+      - test
+    build:
+      context: .
+      dockerfile: Dockerfile
+      network: host
+    volumes:
+      - .:/engine-core
+      - ${HOME}/.cargo:/cargo
+    working_dir: /engine-core
+    environment:
+      CARGO_HOME: /cargo
+    command: cargo test --workspace
