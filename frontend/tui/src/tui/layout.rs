@@ -4,7 +4,9 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui_image::StatefulImage;
+use shinra_engine::textart::TextArtMode;
 
+use crate::config::ViewportMode;
 use crate::core::app::{AppState, PanelId};
 use super::viewport::Viewport;
 
@@ -92,12 +94,26 @@ pub fn draw(f: &mut Frame, app: &AppState, viewport: Option<&mut Viewport>) -> P
     let vp_inner = vp_block.inner(middle[1]);
     f.render_widget(vp_block, middle[1]);
 
-    if let (Some(vp), Some(game)) = (viewport, app.loader.current_game()) {
-        vp.render_scene(&game.scene);
-        let img_widget = StatefulImage::default();
-        f.render_stateful_widget(img_widget, vp_inner, &mut vp.image_state);
-    } else {
-        f.render_widget(Paragraph::new("(no preview)"), vp_inner);
+    let text_mode = match app.viewport_mode {
+        ViewportMode::Mixed => Some(TextArtMode::Mixed),
+        ViewportMode::Quadrant => Some(TextArtMode::Quadrant),
+        ViewportMode::Braille => Some(TextArtMode::Braille),
+        ViewportMode::Image => None,
+    };
+    match (viewport, app.loader.current_game()) {
+        (Some(vp), Some(game)) => {
+            if let Some(mode) = text_mode {
+                let text = vp.render_text(&game.scene, mode, vp_inner.width, vp_inner.height);
+                f.render_widget(Paragraph::new(text), vp_inner);
+            } else {
+                vp.render_scene(&game.scene);
+                let img_widget = StatefulImage::default();
+                f.render_stateful_widget(img_widget, vp_inner, &mut vp.image_state);
+            }
+        }
+        _ => {
+            f.render_widget(Paragraph::new("(no preview)"), vp_inner);
+        }
     }
 
     super::inspector::draw(f, middle[2], &app.inspector, app.focused == PanelId::Inspector);

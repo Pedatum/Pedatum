@@ -9,6 +9,7 @@ pub enum Action {
     FocusInspector,
     FocusProject,
     FocusTerminal,
+    ToggleViewportMode,
     Quit,
 }
 
@@ -20,6 +21,7 @@ impl Action {
             "focus_inspector" => Some(Self::FocusInspector),
             "focus_project" => Some(Self::FocusProject),
             "focus_terminal" => Some(Self::FocusTerminal),
+            "toggle_viewport_mode" => Some(Self::ToggleViewportMode),
             "quit" => Some(Self::Quit),
             _ => None,
         }
@@ -50,10 +52,37 @@ fn key_to_string(key: &KeyEvent) -> String {
     parts.join("+")
 }
 
+/// How the Viewport panel draws the engine framebuffer.
+/// - `Mixed`    — dim cells as braille dots, bright cells as quadrant blocks.
+/// - `Quadrant` — Unicode 2x2 block glyphs (▘▝▀…█), 16 patterns per cell.
+/// - `Braille`  — Unicode 2x4 dot glyphs (U+2800..), 256 patterns per cell.
+/// - `Image`    — ratatui-image protocol (kitty/sixel/halfblocks).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+pub enum ViewportMode {
+    #[default]
+    Mixed,
+    Quadrant,
+    Braille,
+    Image,
+}
+
+impl ViewportMode {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Mixed => Self::Quadrant,
+            Self::Quadrant => Self::Braille,
+            Self::Braille => Self::Image,
+            Self::Image => Self::Mixed,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub mode: Mode,
     pub keybindings: HashMap<String, String>,
+    #[serde(default)]
+    pub viewport_mode: ViewportMode,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -92,8 +121,10 @@ impl Default for Config {
                 ("ctrl+i".into(), "focus_inspector".into()),
                 ("ctrl+f".into(), "focus_project".into()),
                 ("ctrl+t".into(), "focus_terminal".into()),
+                ("m".into(), "toggle_viewport_mode".into()),
                 ("q".into(), "quit".into()),
             ]),
+            viewport_mode: ViewportMode::default(),
         }
     }
 }
@@ -161,6 +192,7 @@ mod tests {
             keybindings: HashMap::from([
                 ("ctrl+a".into(), "focus_hierarchy".into()),
             ]),
+            viewport_mode: ViewportMode::default(),
         };
         assert_eq!(cfg.resolve_action(&ctrl_key('a')), Some(Action::FocusHierarchy));
         assert_eq!(cfg.resolve_action(&ctrl_key('h')), None);
@@ -184,6 +216,30 @@ mod tests {
     }
 
     #[test]
+    fn m_resolves_to_toggle_viewport_mode() {
+        let cfg = Config::default();
+        assert_eq!(
+            cfg.resolve_action(&plain_key('m')),
+            Some(Action::ToggleViewportMode)
+        );
+    }
+
+    #[test]
+    fn viewport_mode_defaults_and_cycles() {
+        assert_eq!(ViewportMode::default(), ViewportMode::Mixed);
+        assert_eq!(ViewportMode::Mixed.next(), ViewportMode::Quadrant);
+        assert_eq!(ViewportMode::Quadrant.next(), ViewportMode::Braille);
+        assert_eq!(ViewportMode::Braille.next(), ViewportMode::Image);
+        assert_eq!(ViewportMode::Image.next(), ViewportMode::Mixed);
+    }
+
+    #[test]
+    fn config_without_viewport_mode_field_parses() {
+        let cfg: Config = ron::from_str("(mode: Tui, keybindings: {})").unwrap();
+        assert_eq!(cfg.viewport_mode, ViewportMode::Mixed);
+    }
+
+    #[test]
     fn action_from_str_round_trips() {
         let cases = [
             ("focus_hierarchy", Action::FocusHierarchy),
@@ -191,6 +247,7 @@ mod tests {
             ("focus_inspector", Action::FocusInspector),
             ("focus_project", Action::FocusProject),
             ("focus_terminal", Action::FocusTerminal),
+            ("toggle_viewport_mode", Action::ToggleViewportMode),
             ("quit", Action::Quit),
         ];
         for (s, expected) in cases {

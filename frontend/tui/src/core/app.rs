@@ -8,6 +8,7 @@ use super::hierarchy::HierarchyState;
 use super::inspector::InspectorState;
 use super::loader::Loader;
 use super::project::ProjectState;
+use crate::config::ViewportMode;
 use crate::tui::terminal::EmbeddedTerminal;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +31,7 @@ const PANEL_ORDER: [PanelId; 5] = [
 pub struct AppState {
     pub running: bool,
     pub focused: PanelId,
+    pub viewport_mode: ViewportMode,
     pub loader: Loader,
     pub hierarchy: HierarchyState,
     pub selected_node: Option<usize>,
@@ -53,6 +55,7 @@ impl AppState {
         Ok(Self {
             running: true,
             focused: PanelId::Viewport,
+            viewport_mode: ViewportMode::default(),
             loader,
             hierarchy,
             selected_node,
@@ -75,6 +78,7 @@ impl AppState {
         Ok(Self {
             running: true,
             focused: PanelId::Viewport,
+            viewport_mode: ViewportMode::default(),
             loader,
             hierarchy,
             selected_node,

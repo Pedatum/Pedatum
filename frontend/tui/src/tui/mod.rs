@@ -42,6 +42,7 @@ pub fn run(config: Config) -> anyhow::Result<()> {
     let mut terminal = Terminal::new(backend)?;
     let games_dir = std::path::Path::new("assets/games");
     let mut app = AppState::new(games_dir)?;
+    app.viewport_mode = config.viewport_mode;
     let mut viewport = Viewport::new();
     let mut panel_areas: Option<layout::PanelAreas> = None;
 
@@ -115,6 +116,7 @@ pub(crate) fn handle_action(app: &mut AppState, action: Action) {
         Action::FocusInspector => app.focused = PanelId::Inspector,
         Action::FocusProject => app.focused = PanelId::Project,
         Action::FocusTerminal => app.focused = PanelId::Terminal,
+        Action::ToggleViewportMode => app.viewport_mode = app.viewport_mode.next(),
         Action::Quit => app.running = false,
     }
 }
