@@ -8,6 +8,7 @@ use super::hierarchy::HierarchyState;
 use super::inspector::InspectorState;
 use super::loader::Loader;
 use super::project::ProjectState;
+use super::run::RunState;
 use crate::config::ViewportMode;
 use crate::tui::terminal::EmbeddedTerminal;
 
@@ -32,6 +33,8 @@ pub struct AppState {
     pub running: bool,
     pub focused: PanelId,
     pub viewport_mode: ViewportMode,
+    /// `Some` while in running (play) mode.
+    pub run: Option<RunState>,
     pub loader: Loader,
     pub hierarchy: HierarchyState,
     pub selected_node: Option<usize>,
@@ -56,6 +59,7 @@ impl AppState {
             running: true,
             focused: PanelId::Viewport,
             viewport_mode: ViewportMode::default(),
+            run: None,
             loader,
             hierarchy,
             selected_node,
@@ -79,6 +83,7 @@ impl AppState {
             running: true,
             focused: PanelId::Viewport,
             viewport_mode: ViewportMode::default(),
+            run: None,
             loader,
             hierarchy,
             selected_node,
@@ -90,6 +95,42 @@ impl AppState {
 
     pub fn current_scene(&self) -> Option<&Scene> {
         self.loader.current_game().map(|g| &g.scene)
+    }
+
+    /// The scene the viewport should draw: the live run copy while playing,
+    /// the editor scene otherwise.
+    pub fn display_scene(&self) -> Option<&Scene> {
+        self.run
+            .as_ref()
+            .map(|r| &r.scene)
+            .or_else(|| self.current_scene())
+    }
+
+    /// Enter / leave running (play) mode.
+    pub fn toggle_run(&mut self) {
+        if self.run.take().is_none() {
+            if let Some(scene) = self.current_scene() {
+                self.run = Some(RunState::new(scene.clone()));
+                self.focused = PanelId::Viewport;
+            }
+        }
+    }
+
+    /// Advance run-mode systems; no-op while editing.
+    pub fn tick(&mut self, dt: f32) {
+        if let Some(run) = &mut self.run {
+            run.tick(dt);
+        }
+    }
+
+    fn switch_to_next_game(&mut self) {
+        self.loader.next_game();
+        self.hierarchy = self
+            .current_scene()
+            .map(HierarchyState::from_scene)
+            .unwrap_or_else(|| HierarchyState::from_scene(&Scene::default()));
+        self.selected_node = self.hierarchy.selected_node_index();
+        self.sync_inspector();
     }
 
     pub fn save_scene(&self) {
@@ -126,6 +167,25 @@ impl AppState {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
+        // Running mode swallows input like the real game runner: space jumps,
+        // n swipes to the next game, esc returns to the editor.
+        if self.run.is_some() {
+            match key.code {
+                KeyCode::Char(' ') => {
+                    if let Some(run) = &mut self.run {
+                        run.queue_jump();
+                    }
+                }
+                KeyCode::Char('n') => {
+                    self.switch_to_next_game();
+                    self.run = self.current_scene().cloned().map(RunState::new);
+                }
+                KeyCode::Esc => self.run = None,
+                _ => {}
+            }
+            return;
+        }
+
         match key.code {
             KeyCode::Esc
                 if !(self.focused == PanelId::Inspector && self.inspector.editing) =>
@@ -133,13 +193,7 @@ impl AppState {
                 self.running = false;
             }
             KeyCode::Char('n') => {
-                self.loader.next_game();
-                self.hierarchy = self
-                    .current_scene()
-                    .map(|s| HierarchyState::from_scene(s))
-                    .unwrap_or_else(|| HierarchyState::from_scene(&Scene::default()));
-                self.selected_node = self.hierarchy.selected_node_index();
-                self.sync_inspector();
+                self.switch_to_next_game();
             }
             KeyCode::Tab => {
                 let idx = PANEL_ORDER

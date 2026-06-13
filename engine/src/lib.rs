@@ -4,6 +4,7 @@ pub mod input;
 pub mod mesh;
 pub mod presenter;
 pub mod scene;
+pub mod sprite;
 pub mod textart;
 pub mod textart_gpu;
 

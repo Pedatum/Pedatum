@@ -143,11 +143,11 @@ mod tests {
 
     #[test]
     fn teapot_loads() {
-        check_mesh("../assets/teapot.obj");
+        check_mesh("../../shinra-examples/assets/obj/teapot.obj");
     }
 
     #[test]
     fn bunny_loads() {
-        check_mesh("../assets/bunny.obj");
+        check_mesh("../../shinra-examples/assets/obj/bunny.obj");
     }
 }

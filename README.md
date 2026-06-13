@@ -21,9 +21,12 @@ unified, not maintained in parallel forever.
 | **cdylib** (code) | `target/debug/libgame*.so`, built from a Rust crate via the `.hom` DSL → `homunc` → rustc | `runner` | Legacy. The build infra (`hom_hecs` runtime, `homunc` integration, build.rs templates) still needs to be relocated into this repo; see "Roadmap". |
 
 A scene-based game is a single `scene.ron` (a `scene::Scene`): nodes with
-transforms, optional `mesh:` OBJ refs, optional `tilemap:` (+ `.tres.ron`
-tileset), and an optional embedded `camera:` — the engine falls back to a
-default perspective camera when it's absent.
+transforms, optional `mesh:` OBJ refs (`assets/obj/...`), optional `sprite:`
+(a quad UV-cut from a sheet PNG: `sheet`, `grid`, `cell`, `size`), optional
+`tilemap:` (+ `.tres.ron` tileset), behavior `components:`
+(`PlayerControlled`, `ScrollX`, `Obstacle` — interpreted by the IDE's
+running mode), and an optional embedded `camera:` — the engine falls back to
+a default perspective camera when it's absent.
 
 We call the architecture **gametok**: TikTok-style swipe between games. `n`
 is consumed by the loader, never seen by the game.
@@ -120,6 +123,7 @@ Configurable bindings (`ide.ron`):
 | Ctrl+F  | focus Project browser|
 | Ctrl+T  | focus Terminal       |
 | m       | cycle viewport render mode |
+| r       | toggle running (play) mode |
 | q       | quit                 |
 
 Built-in keys (not configurable):
@@ -135,6 +139,25 @@ Per-panel keys: Hierarchy / Project use ↑/↓ to move and Enter to
 expand/collapse; in the Inspector, `e` enters edit mode, then Tab cycles
 fields, `+`/`-` adjust the value by 0.1 (applied to the scene live), and Esc
 exits edit mode.
+
+### Running mode
+
+`r` plays the current game on a cloned scene, like the real game runner —
+the editor scene is untouched. While running:
+
+| Key   | Action                                  |
+|-------|-----------------------------------------|
+| space | jump (when on the ground)               |
+| n     | swipe to the next game (restarts the run) |
+| esc / r | stop and return to the editor         |
+
+Behavior comes from `components:` in `scene.ron`, ticked each frame with
+real dt (`frontend/tui/src/core/run.rs`): `PlayerControlled` gets gravity +
+the space jump impulse; `ScrollX(speed, wrap_at, reset_to)` auto-scrolls a
+node along X with wrap-around; colliding with an `Obstacle` node resets the
+run. See `shinra-examples/assets/games/game3` — a Chrome-offline-style dino
+run built from the `assets/images/2x2_grid.png` sprite sheet (dino / tree /
+cloud / bird).
 
 Note: configurable bindings are resolved first, even while the Terminal panel
 is focused — with the default config you cannot type `q` into the embedded
@@ -155,6 +178,7 @@ Keybindings are configurable via `ide.ron` in the working directory:
         "ctrl+f": "focus_project",
         "ctrl+t": "focus_terminal",
         "m": "toggle_viewport_mode",
+        "r": "toggle_run",
         "q": "quit",
     },
     viewport_mode: Mixed,   // Mixed | Quadrant | Braille | Image
@@ -184,9 +208,9 @@ docker compose up gui              # from the repo root
 
 ```
 shinra-engine/
-├── engine/             shinra-engine — wgpu device, render pipeline, scene
-│                       loading, readback/snapshot, presenters, Keymap,
-│                       EngineBackend trait (the single frontend code path)
+├── engine/             shinra-engine — wgpu device, mesh + sprite render
+│                       pipelines, scene loading, readback/snapshot, text-art
+│                       compute pass, presenters, Keymap, EngineBackend trait
 ├── abi/                gametok-abi — #[repr(C)] InputFrame, Drawable (cdylib FFI)
 ├── scene/              serde scene format (scene.ron: nodes, tilemaps, camera)
 ├── runner/             terminal binary; dlopen + render loop + n-swipe
@@ -257,7 +281,9 @@ ls target/debug/smoke/             # cube.png teapot.png bunny.png — render sm
 
 ## Status
 
-POC complete: the TUI IDE loads scene-based games, renders them in-terminal
-via ratatui-image, edits node transforms through the Inspector, and saves
-back to `scene.ron` with Ctrl+S. The GUI is a tested (Playwright) but
-engine-less scaffold. The native runner still loads cdylib `.so` files only.
+POC complete: the TUI IDE loads scene-based games (meshes, sprites,
+tilemaps), renders them in-terminal as Unicode text-art, edits node
+transforms through the Inspector, saves back to `scene.ron` with Ctrl+S, and
+plays them in running mode (`r`) — game3 is a playable dino-run mini game.
+The GUI is a tested (Playwright) but engine-less scaffold. The native runner
+still loads cdylib `.so` files only.

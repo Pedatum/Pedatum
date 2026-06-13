@@ -7,6 +7,7 @@
         "ctrl+f": "focus_project",
         "ctrl+t": "focus_terminal",
         "m": "toggle_viewport_mode",
+        "r": "toggle_run",
         "q": "quit",
     },
     // Mixed (dim=braille dots, bright=quadrant blocks), Quadrant (2x2 blocks),

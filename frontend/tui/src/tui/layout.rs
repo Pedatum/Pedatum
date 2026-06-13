@@ -47,7 +47,12 @@ fn panel_block(title: &str, focused: bool) -> Block<'_> {
 
 fn draw_menu_bar(f: &mut Frame, area: Rect, app: &AppState) {
     let left = " File  Edit  View  Run";
-    let game_info = if let Some(game) = app.loader.current_game() {
+    let game_info = if let Some(run) = &app.run {
+        format!(
+            " RUNNING {:.1}s — space jump · n next · esc stop",
+            run.elapsed
+        )
+    } else if let Some(game) = app.loader.current_game() {
         format!(
             " game {}/{}: {}",
             app.loader.current_index() + 1,
@@ -100,13 +105,13 @@ pub fn draw(f: &mut Frame, app: &AppState, viewport: Option<&mut Viewport>) -> P
         ViewportMode::Braille => Some(TextArtMode::Braille),
         ViewportMode::Image => None,
     };
-    match (viewport, app.loader.current_game()) {
-        (Some(vp), Some(game)) => {
+    match (viewport, app.display_scene()) {
+        (Some(vp), Some(scene)) => {
             if let Some(mode) = text_mode {
-                let text = vp.render_text(&game.scene, mode, vp_inner.width, vp_inner.height);
+                let text = vp.render_text(scene, mode, vp_inner.width, vp_inner.height);
                 f.render_widget(Paragraph::new(text), vp_inner);
             } else {
-                vp.render_scene(&game.scene);
+                vp.render_scene(scene);
                 let img_widget = StatefulImage::default();
                 f.render_stateful_widget(img_widget, vp_inner, &mut vp.image_state);
             }

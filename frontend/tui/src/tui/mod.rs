@@ -6,7 +6,7 @@ pub mod terminal;
 pub mod viewport;
 
 use std::io;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEventKind, EnableMouseCapture, DisableMouseCapture};
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen, enable_raw_mode, disable_raw_mode};
@@ -62,7 +62,13 @@ pub fn run(config: Config) -> anyhow::Result<()> {
         }
     }
 
+    let mut last_tick = Instant::now();
     while app.running {
+        // Advance run-mode systems with real elapsed time (no-op in editor).
+        let now = Instant::now();
+        app.tick((now - last_tick).as_secs_f32());
+        last_tick = now;
+
         if let Some(ref areas) = panel_areas {
             let inner_h = areas.terminal.height.saturating_sub(2);
             let inner_w = areas.terminal.width.saturating_sub(2);
@@ -84,7 +90,7 @@ pub fn run(config: Config) -> anyhow::Result<()> {
                         handle_action(&mut app, action);
                     } else if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
                         app.save_scene();
-                    } else if app.focused == PanelId::Terminal {
+                    } else if app.run.is_none() && app.focused == PanelId::Terminal {
                         if let Some(ref mut term) = app.terminal {
                             send_key_to_pty(term, &key);
                         }
@@ -117,6 +123,7 @@ pub(crate) fn handle_action(app: &mut AppState, action: Action) {
         Action::FocusProject => app.focused = PanelId::Project,
         Action::FocusTerminal => app.focused = PanelId::Terminal,
         Action::ToggleViewportMode => app.viewport_mode = app.viewport_mode.next(),
+        Action::ToggleRun => app.toggle_run(),
         Action::Quit => app.running = false,
     }
 }

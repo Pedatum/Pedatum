@@ -21,6 +21,8 @@ pub struct Node {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mesh: Option<MeshRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sprite: Option<Sprite>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tilemap: Option<Tilemap>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub components: Vec<ComponentValue>,
@@ -46,12 +48,27 @@ impl Default for Transform {
     }
 }
 
-/// Reference to a mesh asset (e.g., `assets/bunny.obj`). Path is
+/// Reference to a mesh asset (e.g., `assets/obj/bunny.obj`). Path is
 /// workspace-relative — runtime resolves it the same way the existing
 /// `Mesh::from_obj_file(path)` already does.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MeshRef {
     pub path: String,
+}
+
+/// A textured quad cut from a sprite-sheet image by grid cell. The quad
+/// faces +Z (side-view / 2D games) and is centered on the node's transform.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Sprite {
+    /// Path to the sheet image (e.g. `assets/images/2x2_grid.png`),
+    /// workspace-relative like mesh paths.
+    pub sheet: String,
+    /// Sheet layout as [columns, rows], e.g. [2, 2].
+    pub grid: [u32; 2],
+    /// Cell to cut as [column, row]; [0, 0] is the top-left.
+    pub cell: [u32; 2],
+    /// World-space quad size [width, height].
+    pub size: [f32; 2],
 }
 
 /// 2D tilemap. `tileset` is a path to a `.tres.ron` Tileset file.
@@ -101,12 +118,22 @@ impl Scene {
     }
 }
 
-/// Generic component value attached to a Node. v1 supports a small fixed
-/// set (PlayerControlled is the only behavior tag right now); future
-/// components can extend the enum.
+/// Generic component value attached to a Node. Behavior tags are interpreted
+/// by the frontend's running mode; future components can extend the enum.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ComponentValue {
+    /// Run mode: this node is the player (gravity + space-to-jump).
     PlayerControlled,
+    /// Run mode: translate along X by `speed` units/sec; once past `wrap_at`
+    /// (below it for negative speed, above it for positive), snap back to
+    /// `reset_to`.
+    ScrollX {
+        speed: f32,
+        wrap_at: f32,
+        reset_to: f32,
+    },
+    /// Run mode: colliding with the player resets the run.
+    Obstacle,
 }
 
 /// Top-level type stored in `tscn.ron` — describes the camera the editor /
@@ -149,6 +176,7 @@ mod tests {
                     name: "ground".into(),
                     transform: Transform::default(),
                     mesh: None,
+                    sprite: None,
                     tilemap: Some(Tilemap {
                         tileset: "tilesets/town.tres.ron".into(),
                         tile_size: [1.0, 1.0],
@@ -180,8 +208,9 @@ mod tests {
                         ..Default::default()
                     },
                     mesh: Some(MeshRef {
-                        path: "assets/bunny.obj".into(),
+                        path: "assets/obj/bunny.obj".into(),
                     }),
+                    sprite: None,
                     tilemap: None,
                     components: vec![ComponentValue::PlayerControlled],
                     children: vec![],
@@ -235,6 +264,32 @@ mod tests {
         let serialized = ron::to_string(&s1).unwrap();
         let s2: Scene = ron::from_str(&serialized).unwrap();
         assert_eq!(s1, s2);
+    }
+
+    #[test]
+    fn sprite_and_run_components_roundtrip() {
+        let n = Node {
+            name: "dino".into(),
+            sprite: Some(Sprite {
+                sheet: "assets/images/2x2_grid.png".into(),
+                grid: [2, 2],
+                cell: [0, 0],
+                size: [1.2, 1.2],
+            }),
+            components: vec![
+                ComponentValue::PlayerControlled,
+                ComponentValue::Obstacle,
+                ComponentValue::ScrollX {
+                    speed: -3.0,
+                    wrap_at: -7.0,
+                    reset_to: 7.5,
+                },
+            ],
+            ..Default::default()
+        };
+        let s = ron::ser::to_string_pretty(&n, Default::default()).unwrap();
+        let n2: Node = ron::from_str(&s).unwrap();
+        assert_eq!(n, n2);
     }
 
     #[test]

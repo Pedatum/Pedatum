@@ -10,6 +10,7 @@ pub enum Action {
     FocusProject,
     FocusTerminal,
     ToggleViewportMode,
+    ToggleRun,
     Quit,
 }
 
@@ -22,6 +23,7 @@ impl Action {
             "focus_project" => Some(Self::FocusProject),
             "focus_terminal" => Some(Self::FocusTerminal),
             "toggle_viewport_mode" => Some(Self::ToggleViewportMode),
+            "toggle_run" => Some(Self::ToggleRun),
             "quit" => Some(Self::Quit),
             _ => None,
         }
@@ -122,6 +124,7 @@ impl Default for Config {
                 ("ctrl+f".into(), "focus_project".into()),
                 ("ctrl+t".into(), "focus_terminal".into()),
                 ("m".into(), "toggle_viewport_mode".into()),
+                ("r".into(), "toggle_run".into()),
                 ("q".into(), "quit".into()),
             ]),
             viewport_mode: ViewportMode::default(),
@@ -225,6 +228,12 @@ mod tests {
     }
 
     #[test]
+    fn r_resolves_to_toggle_run() {
+        let cfg = Config::default();
+        assert_eq!(cfg.resolve_action(&plain_key('r')), Some(Action::ToggleRun));
+    }
+
+    #[test]
     fn viewport_mode_defaults_and_cycles() {
         assert_eq!(ViewportMode::default(), ViewportMode::Mixed);
         assert_eq!(ViewportMode::Mixed.next(), ViewportMode::Quadrant);
@@ -248,6 +257,7 @@ mod tests {
             ("focus_project", Action::FocusProject),
             ("focus_terminal", Action::FocusTerminal),
             ("toggle_viewport_mode", Action::ToggleViewportMode),
+            ("toggle_run", Action::ToggleRun),
             ("quit", Action::Quit),
         ];
         for (s, expected) in cases {

@@ -21,6 +21,7 @@ pub struct Engine {
     // pointer is stable (no reuse by a different allocation).
     mesh_cache:
         HashMap<*const crate::mesh::Mesh, (Arc<crate::mesh::Mesh>, wgpu::Buffer, wgpu::Buffer)>,
+    pub sprites: crate::sprite::SpriteRenderer,
     readback_buf: Option<wgpu::Buffer>,
     readback_pad_bytes_per_row: u32,
     current_scene: Option<crate::scene::Scene>,
@@ -153,6 +154,8 @@ impl Engine {
             cache: None,
         });
 
+        let sprites = crate::sprite::SpriteRenderer::new(&device, &camera_bgl, &object_bgl);
+
         Self {
             device,
             queue,
@@ -166,6 +169,7 @@ impl Engine {
             object_bgl,
             object_slots: Vec::new(),
             mesh_cache: HashMap::new(),
+            sprites,
             readback_buf: None,
             readback_pad_bytes_per_row: 0,
             current_scene: None,
@@ -187,6 +191,13 @@ impl Engine {
             .query::<(&MeshHandle, &Model)>()
             .iter()
             .map(|(_, (mh, m))| (Arc::clone(&mh.0), m.0))
+            .collect();
+
+        let sprite_draws: Vec<(crate::sprite::SpriteDraw, glam::Mat4)> = scene
+            .world
+            .query::<(&crate::sprite::SpriteDraw, &Model)>()
+            .iter()
+            .map(|(_, (s, m))| (s.clone(), m.0))
             .collect();
 
         for (mesh, _) in &drawables {
@@ -212,7 +223,8 @@ impl Engine {
         }
 
         // Grow object_slots to cover all drawables, then upload model matrices.
-        let needed = drawables.len();
+        // Sprites use the slots after the meshes.
+        let needed = drawables.len() + sprite_draws.len();
         while self.object_slots.len() < needed {
             let identity: [f32; 16] = glam::Mat4::IDENTITY.to_cols_array();
             let buf = self
@@ -232,7 +244,12 @@ impl Engine {
             });
             self.object_slots.push((buf, bg));
         }
-        for (i, (_, model)) in drawables.iter().enumerate() {
+        for (i, model) in drawables
+            .iter()
+            .map(|(_, m)| m)
+            .chain(sprite_draws.iter().map(|(_, m)| m))
+            .enumerate()
+        {
             let model_arr: [f32; 16] = model.to_cols_array();
             self.queue
                 .write_buffer(&self.object_slots[i].0, 0, bytemuck::bytes_of(&model_arr));
@@ -289,6 +306,19 @@ impl Engine {
                 pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
                 pass.set_bind_group(1, &self.object_slots[i].1, &[]);
                 pass.draw_indexed(0..mesh.indices.len() as u32, 0, 0..1);
+            }
+
+            if !sprite_draws.is_empty() {
+                // Camera bind group (0) carries over — same layout.
+                pass.set_pipeline(&self.sprites.pipeline);
+                for (i, (sd, _)) in sprite_draws.iter().enumerate() {
+                    let slot = drawables.len() + i;
+                    pass.set_bind_group(1, &self.object_slots[slot].1, &[]);
+                    pass.set_bind_group(2, &sd.texture.bind_group, &[]);
+                    pass.set_vertex_buffer(0, sd.mesh.vbuf.slice(..));
+                    pass.set_index_buffer(sd.mesh.ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..sd.mesh.index_count, 0, 0..1);
+                }
             }
         }
 
@@ -460,9 +490,17 @@ impl Engine {
         );
         let world = parent_transform * local;
 
+        if let Some(sprite) = &node.sprite {
+            if let Some(draw) = self.sprites.instance(&self.device, &self.queue, sprite) {
+                let model =
+                    world * Mat4::from_scale(Vec3::new(sprite.size[0], sprite.size[1], 1.0));
+                scene.world.spawn((draw, crate::scene::Model(model)));
+            }
+        }
+
         if let Some(tilemap) = &node.tilemap {
             if self.quad_mesh.is_none() {
-                if let Ok(m) = Mesh::from_obj_file("assets/quad.obj") {
+                if let Ok(m) = Mesh::from_obj_file("assets/obj/quad.obj") {
                     self.quad_mesh = Some(Arc::new(m));
                 }
             }
