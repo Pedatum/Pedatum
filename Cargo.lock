@@ -2312,6 +2312,7 @@ dependencies = [
  "serde",
  "shinra-engine",
  "tempfile",
+ "unicode-width 0.2.0",
  "vt100",
  "wgpu",
 ]

@@ -7,6 +7,7 @@ use scene::Scene;
 use super::hierarchy::HierarchyState;
 use super::inspector::InspectorState;
 use super::loader::Loader;
+use super::overlay::{OverlayAnchor, OverlayState, TextBoxOverlay};
 use super::project::ProjectState;
 use super::run::RunState;
 use crate::config::ViewportMode;
@@ -33,6 +34,7 @@ pub struct AppState {
     pub running: bool,
     pub focused: PanelId,
     pub viewport_mode: ViewportMode,
+    pub overlays: OverlayState,
     /// `Some` while in running (play) mode.
     pub run: Option<RunState>,
     pub loader: Loader,
@@ -51,7 +53,8 @@ impl AppState {
             .map(|g| HierarchyState::from_scene(&g.scene))
             .unwrap_or_else(|| HierarchyState::from_scene(&Scene::default()));
         let selected_node = hierarchy.selected_node_index();
-        let inspector = Self::build_inspector(loader.current_game().map(|g| &g.scene), selected_node);
+        let inspector =
+            Self::build_inspector(loader.current_game().map(|g| &g.scene), selected_node);
         let project_root = std::env::current_dir().unwrap_or_else(|_| games_dir.to_path_buf());
         let project = ProjectState::scan(&project_root);
         let terminal = EmbeddedTerminal::new(80, 24)?;
@@ -59,6 +62,7 @@ impl AppState {
             running: true,
             focused: PanelId::Viewport,
             viewport_mode: ViewportMode::default(),
+            overlays: OverlayState::default(),
             run: None,
             loader,
             hierarchy,
@@ -76,13 +80,15 @@ impl AppState {
             .map(|g| HierarchyState::from_scene(&g.scene))
             .unwrap_or_else(|| HierarchyState::from_scene(&Scene::default()));
         let selected_node = hierarchy.selected_node_index();
-        let inspector = Self::build_inspector(loader.current_game().map(|g| &g.scene), selected_node);
+        let inspector =
+            Self::build_inspector(loader.current_game().map(|g| &g.scene), selected_node);
         let project_root = std::env::current_dir().unwrap_or_else(|_| games_dir.to_path_buf());
         let project = ProjectState::scan(&project_root);
         Ok(Self {
             running: true,
             focused: PanelId::Viewport,
             viewport_mode: ViewportMode::default(),
+            overlays: OverlayState::default(),
             run: None,
             loader,
             hierarchy,
@@ -112,8 +118,51 @@ impl AppState {
             if let Some(scene) = self.current_scene() {
                 self.run = Some(RunState::new(scene.clone()));
                 self.focused = PanelId::Viewport;
+                self.sync_run_overlay();
             }
+        } else {
+            self.overlays.dismiss("run-messages");
         }
+    }
+
+    fn sync_run_overlay(&mut self) {
+        let Some(run) = &self.run else {
+            self.overlays.dismiss("run-messages");
+            return;
+        };
+
+        let text_box = if let Some(line) = run.current_dialogue() {
+            let (index, total) = run.dialogue_progress().unwrap_or((0, 0));
+            let title = if line.speaker.is_empty() {
+                "Narration".to_string()
+            } else {
+                line.speaker.clone()
+            };
+            TextBoxOverlay::new(
+                "run-messages",
+                [
+                    line.text.clone(),
+                    format!("Space: next  [{}/{}]  ·  esc: stop", index + 1, total),
+                ],
+            )
+            .title(title)
+            .anchor(OverlayAnchor::BottomLeft)
+            .width(64)
+            .max_height(8)
+        } else if run.has_dialogue() {
+            TextBoxOverlay::new(
+                "run-messages",
+                ["End of dialogue.", "n: next game  ·  esc: stop"],
+            )
+            .title("End")
+            .anchor(OverlayAnchor::BottomLeft)
+            .width(48)
+            .max_height(6)
+        } else {
+            self.overlays.dismiss("run-messages");
+            return;
+        };
+        self.overlays.show(text_box);
     }
 
     /// Advance run-mode systems; no-op while editing.
@@ -144,9 +193,7 @@ impl AppState {
 
     fn build_inspector(scene: Option<&Scene>, selected: Option<usize>) -> InspectorState {
         match (scene, selected) {
-            (Some(s), Some(idx)) if idx < s.nodes.len() => {
-                InspectorState::from_node(&s.nodes[idx])
-            }
+            (Some(s), Some(idx)) if idx < s.nodes.len() => InspectorState::from_node(&s.nodes[idx]),
             _ => InspectorState::clear(),
         }
     }
@@ -167,29 +214,36 @@ impl AppState {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
-        // Running mode swallows input like the real game runner: space jumps,
-        // n swipes to the next game, esc returns to the editor.
+        // Running mode swallows input like the real game runner. Dialogue
+        // scenes use Space for the next line; other games use it to jump.
         if self.run.is_some() {
             match key.code {
                 KeyCode::Char(' ') => {
                     if let Some(run) = &mut self.run {
-                        run.queue_jump();
+                        if run.has_dialogue() {
+                            run.advance_dialogue();
+                        } else {
+                            run.queue_jump();
+                        }
                     }
+                    self.sync_run_overlay();
                 }
                 KeyCode::Char('n') => {
                     self.switch_to_next_game();
                     self.run = self.current_scene().cloned().map(RunState::new);
+                    self.sync_run_overlay();
                 }
-                KeyCode::Esc => self.run = None,
+                KeyCode::Esc => {
+                    self.run = None;
+                    self.overlays.dismiss("run-messages");
+                }
                 _ => {}
             }
             return;
         }
 
         match key.code {
-            KeyCode::Esc
-                if !(self.focused == PanelId::Inspector && self.inspector.editing) =>
-            {
+            KeyCode::Esc if !(self.focused == PanelId::Inspector && self.inspector.editing) => {
                 self.running = false;
             }
             KeyCode::Char('n') => {

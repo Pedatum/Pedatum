@@ -103,6 +103,14 @@ pub struct Tile {
     pub color: [f32; 3],
 }
 
+/// One visual-novel style line shown by a `Dialogue` component.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DialogueLine {
+    /// Name displayed in the dialogue box title. Use an empty string for narration.
+    pub speaker: String,
+    pub text: String,
+}
+
 impl Scene {
     pub fn save(&self, path: &Path) -> anyhow::Result<()> {
         let pretty = ron::ser::PrettyConfig::default().depth_limit(8);
@@ -134,6 +142,8 @@ pub enum ComponentValue {
     },
     /// Run mode: colliding with the player resets the run.
     Obstacle,
+    /// Run mode: show these lines in order, advancing one line per Space press.
+    Dialogue { lines: Vec<DialogueLine> },
 }
 
 /// Top-level type stored in `tscn.ron` — describes the camera the editor /
@@ -290,6 +300,29 @@ mod tests {
         let s = ron::ser::to_string_pretty(&n, Default::default()).unwrap();
         let n2: Node = ron::from_str(&s).unwrap();
         assert_eq!(n, n2);
+    }
+
+    #[test]
+    fn dialogue_component_roundtrip() {
+        let n = Node {
+            name: "story".into(),
+            components: vec![ComponentValue::Dialogue {
+                lines: vec![
+                    DialogueLine {
+                        speaker: "Narrator".into(),
+                        text: "The terminal flickers awake.".into(),
+                    },
+                    DialogueLine {
+                        speaker: "Mina".into(),
+                        text: "You made it.".into(),
+                    },
+                ],
+            }],
+            ..Default::default()
+        };
+        let serialized = ron::ser::to_string_pretty(&n, Default::default()).unwrap();
+        let roundtrip: Node = ron::from_str(&serialized).unwrap();
+        assert_eq!(n, roundtrip);
     }
 
     #[test]

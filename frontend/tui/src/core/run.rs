@@ -2,9 +2,10 @@
 //! a cloned `scene::Scene` (no GPU) — the viewport just renders the mutated
 //! copy each frame. Behavior comes from `ComponentValue` tags:
 //! `PlayerControlled` (gravity + space-to-jump), `ScrollX` (auto-scroll with
-//! wrap-around), `Obstacle` (collision with the player resets the run).
+//! wrap-around), `Obstacle` (collision with the player resets the run), and
+//! `Dialogue` (visual-novel lines advanced with Space).
 
-use scene::{ComponentValue, Node, Scene};
+use scene::{ComponentValue, DialogueLine, Node, Scene};
 
 pub const GRAVITY: f32 = -32.0;
 pub const JUMP_VELOCITY: f32 = 10.5;
@@ -22,6 +23,7 @@ pub struct RunState {
     jump_queued: bool,
     pub elapsed: f32,
     pub crashes: u32,
+    dialogue_index: usize,
 }
 
 impl RunState {
@@ -33,11 +35,34 @@ impl RunState {
             jump_queued: false,
             elapsed: 0.0,
             crashes: 0,
+            dialogue_index: 0,
         }
     }
 
     pub fn queue_jump(&mut self) {
         self.jump_queued = true;
+    }
+
+    /// Whether this scene owns the Space key for dialogue progression.
+    pub fn has_dialogue(&self) -> bool {
+        dialogue_lines(&self.scene).is_some()
+    }
+
+    pub fn current_dialogue(&self) -> Option<&DialogueLine> {
+        dialogue_lines(&self.scene)?.get(self.dialogue_index)
+    }
+
+    pub fn dialogue_progress(&self) -> Option<(usize, usize)> {
+        let lines = dialogue_lines(&self.scene)?;
+        Some((self.dialogue_index.min(lines.len()), lines.len()))
+    }
+
+    /// Advance to the next line. After the last line, `current_dialogue`
+    /// becomes `None` so the UI can show an end marker.
+    pub fn advance_dialogue(&mut self) {
+        if let Some(lines) = dialogue_lines(&self.scene) {
+            self.dialogue_index = (self.dialogue_index + 1).min(lines.len());
+        }
     }
 
     pub fn tick(&mut self, dt: f32) {
@@ -46,12 +71,12 @@ impl RunState {
 
         // ScrollX system.
         for node in &mut self.scene.nodes {
-            let scroll = node.components.iter().find_map(|c| match *c {
+            let scroll = node.components.iter().find_map(|c| match c {
                 ComponentValue::ScrollX {
                     speed,
                     wrap_at,
                     reset_to,
-                } => Some((speed, wrap_at, reset_to)),
+                } => Some((*speed, *wrap_at, *reset_to)),
                 _ => None,
             });
             if let Some((speed, wrap_at, reset_to)) = scroll {
@@ -98,8 +123,32 @@ impl RunState {
             self.scene = self.initial.clone();
             self.vy = 0.0;
             self.elapsed = 0.0;
+            self.dialogue_index = 0;
         }
     }
+}
+
+fn dialogue_lines(nodes_scene: &Scene) -> Option<&[DialogueLine]> {
+    fn find(nodes: &[Node]) -> Option<&[DialogueLine]> {
+        for node in nodes {
+            if let Some(lines) = node
+                .components
+                .iter()
+                .find_map(|component| match component {
+                    ComponentValue::Dialogue { lines } => Some(lines.as_slice()),
+                    _ => None,
+                })
+            {
+                return Some(lines);
+            }
+            if let Some(lines) = find(&node.children) {
+                return Some(lines);
+            }
+        }
+        None
+    }
+
+    find(&nodes_scene.nodes)
 }
 
 pub fn player_index(scene: &Scene) -> Option<usize> {
@@ -115,10 +164,7 @@ pub fn player_index(scene: &Scene) -> Option<usize> {
 fn rect(node: &Node) -> ([f32; 2], [f32; 2]) {
     let t = node.transform.translation;
     let size = node.sprite.as_ref().map(|s| s.size).unwrap_or([1.0, 1.0]);
-    (
-        [t[0], t[1]],
-        [size[0] * HITBOX_HALF, size[1] * HITBOX_HALF],
-    )
+    ([t[0], t[1]], [size[0] * HITBOX_HALF, size[1] * HITBOX_HALF])
 }
 
 fn overlaps(a: ([f32; 2], [f32; 2]), b: ([f32; 2], [f32; 2])) -> bool {
@@ -271,5 +317,39 @@ mod tests {
         )]);
         run.tick(5.0); // clamped to MAX_DT
         assert!(run.elapsed <= MAX_DT + 1e-6);
+    }
+
+    #[test]
+    fn dialogue_advances_one_line_per_action() {
+        let story = node(
+            "story",
+            0.0,
+            0.0,
+            vec![ComponentValue::Dialogue {
+                lines: vec![
+                    DialogueLine {
+                        speaker: "Narrator".into(),
+                        text: "First".into(),
+                    },
+                    DialogueLine {
+                        speaker: "Mina".into(),
+                        text: "Second".into(),
+                    },
+                ],
+            }],
+        );
+        let mut run = run_scene(vec![story]);
+
+        assert!(run.has_dialogue());
+        assert_eq!(run.current_dialogue().unwrap().text, "First");
+        assert_eq!(run.dialogue_progress(), Some((0, 2)));
+
+        run.advance_dialogue();
+        assert_eq!(run.current_dialogue().unwrap().text, "Second");
+        assert_eq!(run.dialogue_progress(), Some((1, 2)));
+
+        run.advance_dialogue();
+        assert!(run.current_dialogue().is_none());
+        assert_eq!(run.dialogue_progress(), Some((2, 2)));
     }
 }

@@ -25,7 +25,8 @@ transforms, optional `mesh:` OBJ refs (`assets/obj/...`), optional `sprite:`
 (a quad UV-cut from a sheet PNG: `sheet`, `grid`, `cell`, `size`), optional
 `tilemap:` (+ `.tres.ron` tileset), behavior `components:`
 (`PlayerControlled`, `ScrollX`, `Obstacle` — interpreted by the IDE's
-running mode), and an optional embedded `camera:` — the engine falls back to
+running mode, plus `Dialogue` for Space-advanced visual-novel text), and an
+optional embedded `camera:` — the engine falls back to
 a default perspective camera when it's absent.
 
 We call the architecture **gametok**: TikTok-style swipe between games. `n`
@@ -147,7 +148,7 @@ the editor scene is untouched. While running:
 
 | Key   | Action                                  |
 |-------|-----------------------------------------|
-| space | jump (when on the ground)               |
+| space | next dialogue line, or jump in action games |
 | n     | swipe to the next game (restarts the run) |
 | esc / r | stop and return to the editor         |
 
@@ -158,6 +159,14 @@ node along X with wrap-around; colliding with an `Obstacle` node resets the
 run. See `shinra-examples/assets/games/game3` — a Chrome-offline-style dino
 run built from the `assets/images/2x2_grid.png` sprite sheet (dino / tree /
 cloud / bird).
+
+`Dialogue(lines: [...])` turns the same overlay system into a simple galgame
+text box: each line has a `speaker` and `text`, and Space advances to the next
+line. See `shinra-examples/assets/games/game4` for a complete example.
+
+Game4 uses the reusable text-box overlay system
+(`frontend/tui/src/core/overlay.rs` + `tui/overlay.rs`). The dialogue overlay
+is only created for scenes containing `Dialogue`; games 1–3 do not show it.
 
 Note: configurable bindings are resolved first, even while the Terminal panel
 is focused — with the default config you cannot type `q` into the embedded

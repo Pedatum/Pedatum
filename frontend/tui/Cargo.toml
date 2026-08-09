@@ -26,6 +26,7 @@ libc = "0.2"
 wgpu = "27"
 portable-pty = "0.8"
 vt100 = "0.15"
+unicode-width = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

@@ -6,9 +6,9 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui_image::StatefulImage;
 use shinra_engine::textart::TextArtMode;
 
+use super::viewport::Viewport;
 use crate::config::ViewportMode;
 use crate::core::app::{AppState, PanelId};
-use super::viewport::Viewport;
 
 pub struct PanelAreas {
     pub hierarchy: Rect,
@@ -48,8 +48,13 @@ fn panel_block(title: &str, focused: bool) -> Block<'_> {
 fn draw_menu_bar(f: &mut Frame, area: Rect, app: &AppState) {
     let left = " File  Edit  View  Run";
     let game_info = if let Some(run) = &app.run {
+        let action = if run.has_dialogue() {
+            "space next text"
+        } else {
+            "space jump"
+        };
         format!(
-            " RUNNING {:.1}s — space jump · n next · esc stop",
+            " RUNNING {:.1}s — {action} · n next · esc stop",
             run.elapsed
         )
     } else if let Some(game) = app.loader.current_game() {
@@ -93,7 +98,12 @@ pub fn draw(f: &mut Frame, app: &AppState, viewport: Option<&mut Viewport>) -> P
         ])
         .split(outer[1]);
 
-    super::hierarchy::draw(f, middle[0], &app.hierarchy, app.focused == PanelId::Hierarchy);
+    super::hierarchy::draw(
+        f,
+        middle[0],
+        &app.hierarchy,
+        app.focused == PanelId::Hierarchy,
+    );
 
     let vp_block = panel_block("Viewport", app.focused == PanelId::Viewport);
     let vp_inner = vp_block.inner(middle[1]);
@@ -120,8 +130,14 @@ pub fn draw(f: &mut Frame, app: &AppState, viewport: Option<&mut Viewport>) -> P
             f.render_widget(Paragraph::new("(no preview)"), vp_inner);
         }
     }
+    super::overlay::draw(f, vp_inner, &app.overlays);
 
-    super::inspector::draw(f, middle[2], &app.inspector, app.focused == PanelId::Inspector);
+    super::inspector::draw(
+        f,
+        middle[2],
+        &app.inspector,
+        app.focused == PanelId::Inspector,
+    );
 
     let bottom = Layout::default()
         .direction(Direction::Horizontal)
@@ -133,9 +149,7 @@ pub fn draw(f: &mut Frame, app: &AppState, viewport: Option<&mut Viewport>) -> P
     if let Some(ref term) = app.terminal {
         super::terminal::draw(f, bottom[1], term, app.focused == PanelId::Terminal);
     } else {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title("Terminal");
+        let block = Block::default().borders(Borders::ALL).title("Terminal");
         f.render_widget(block, bottom[1]);
     }
 

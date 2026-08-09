@@ -1,6 +1,7 @@
 pub mod hierarchy;
 pub mod inspector;
 pub mod layout;
+pub mod overlay;
 pub mod project;
 pub mod terminal;
 pub mod viewport;
