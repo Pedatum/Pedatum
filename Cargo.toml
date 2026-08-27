@@ -1,4 +1,4 @@
 [workspace]
 resolver = "2"
-members = ["engine", "abi", "runner", "scene", "frontend/tui"]
+members = ["engine", "abi", "runner", "scene", "frontend/tui", "cli"]
 # "frontend/gui/src-tauri" excluded — requires `npm install` + `cargo fetch` with network access

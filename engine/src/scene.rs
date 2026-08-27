@@ -58,9 +58,6 @@ impl Camera {
 
 pub struct MeshHandle(pub Arc<Mesh>);
 pub struct Model(pub Mat4);
-pub struct BunnyTag;
-pub struct TeapotTag;
-pub struct PlayerControlled;
 
 pub struct Scene {
     pub camera: Camera,
@@ -84,10 +81,6 @@ impl Scene {
             *m = Model(model);
         }
     }
-}
-
-pub fn orbit_eye(t_seconds: f32, radius: f32, height: f32) -> Vec3 {
-    Vec3::new(t_seconds.cos() * radius, height, t_seconds.sin() * radius)
 }
 
 #[cfg(test)]
@@ -133,14 +126,6 @@ mod tests {
     fn orthographic_view_proj_is_finite() {
         let m = default_ortho().view_proj();
         assert!(m.to_cols_array().iter().all(|v| v.is_finite()));
-    }
-
-    #[test]
-    fn orbit_eye_at_zero() {
-        let v = orbit_eye(0.0, 3.0, 1.5);
-        assert!((v.x - 3.0).abs() < 1e-6);
-        assert!((v.y - 1.5).abs() < 1e-6);
-        assert!(v.z.abs() < 1e-6);
     }
 
     #[test]

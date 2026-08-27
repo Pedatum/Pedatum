@@ -130,35 +130,6 @@ fn make_app() -> (AppState, std::path::PathBuf, tempfile::TempDir) {
     (app, game_dir, tmp)
 }
 
-fn make_dialogue_app() -> (AppState, tempfile::TempDir) {
-    let tmp = tempfile::tempdir().unwrap();
-    let game_dir = tmp.path().join("game1");
-    std::fs::create_dir(&game_dir).unwrap();
-    let scene = scene::Scene {
-        name: "dialogue_test".into(),
-        camera: None,
-        nodes: vec![scene::Node {
-            name: "story".into(),
-            components: vec![scene::ComponentValue::Dialogue {
-                lines: vec![
-                    scene::DialogueLine {
-                        speaker: "Narrator".into(),
-                        text: "The rain stopped.".into(),
-                    },
-                    scene::DialogueLine {
-                        speaker: "Mina".into(),
-                        text: "Let us go.".into(),
-                    },
-                ],
-            }],
-            ..Default::default()
-        }],
-    };
-    scene.save(&game_dir.join("scene.ron")).unwrap();
-    let app = AppState::new_headless(tmp.path()).unwrap();
-    (app, tmp)
-}
-
 // -- Snapshot tests --
 
 #[test]
@@ -199,64 +170,70 @@ fn snapshot_after_adjust_x() {
     check_or_update_txt_snapshot(&snapshot, &baseline);
 }
 
+/// Play mode is scheduling only: entering it must not synthesise any overlay.
+/// Overlays belong to a game, driven through its own systems.
 #[test]
-fn non_dialogue_game_does_not_show_text_overlay() {
+fn play_mode_creates_no_overlay_of_its_own() {
     let (mut app, _, _tmp) = make_app();
 
     app.toggle_run();
     assert!(app.run.is_some());
     assert!(app.overlays.get("run-messages").is_none());
-    assert!(!render_snapshot(&app).contains("Space: next"));
 
     app.handle_key(key(KeyCode::Esc));
     assert!(app.run.is_none());
     assert!(app.overlays.get("run-messages").is_none());
 }
 
+/// The IDE's status line must not describe gameplay keys — it does not know
+/// what a game binds them to.
 #[test]
-fn space_advances_visual_novel_dialogue() {
-    let (mut app, _tmp) = make_dialogue_app();
-
+fn play_mode_status_names_only_ide_keys() {
+    let (mut app, _, _tmp) = make_app();
     app.toggle_run();
-    let first = app.overlays.get("run-messages").unwrap();
-    assert_eq!(first.title.as_deref(), Some("Narrator"));
-    assert_eq!(first.lines[0], "The rain stopped.");
-    assert!(render_snapshot(&app).contains("Space: next"));
-
-    app.handle_key(key(KeyCode::Char(' ')));
-    let second = app.overlays.get("run-messages").unwrap();
-    assert_eq!(second.title.as_deref(), Some("Mina"));
-    assert_eq!(second.lines[0], "Let us go.");
-
-    app.handle_key(key(KeyCode::Char(' ')));
-    let end = app.overlays.get("run-messages").unwrap();
-    assert_eq!(end.title.as_deref(), Some("End"));
-    assert_eq!(end.lines[0], "End of dialogue.");
+    let frame = render_snapshot(&app);
+    assert!(frame.contains("RUNNING"));
+    for gameplay in ["space jump", "space next text", "Space: next"] {
+        assert!(
+            !frame.contains(gameplay),
+            "status line leaked a gameplay key: {gameplay}"
+        );
+    }
 }
 
+/// The engine stores game components opaquely: game4 carries a `Dialogue`
+/// component the scene crate has never heard of, and it must still load. The
+/// dialogue text itself lives in a resource, not in the scene.
 #[test]
-fn galgame_example_scene_is_valid() {
-    let example = Path::new(env!("CARGO_MANIFEST_DIR"))
+fn game4_scene_carries_an_opaque_component_and_no_dialogue_text() {
+    let games = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .parent()
         .unwrap()
         .parent()
         .unwrap()
-        .join("shinra-examples/assets/games/game4/scene.ron");
-    let scene = scene::Scene::load(&example).unwrap();
-    let lines = scene
+        .join("shinra-examples/assets/games/game4");
+
+    let scene = scene::Scene::load(&games.join("scene.ron")).unwrap();
+    assert_eq!(scene.name, "terminal-hearts");
+
+    let story = scene
         .nodes
         .iter()
-        .flat_map(|node| &node.components)
-        .find_map(|component| match component {
-            scene::ComponentValue::Dialogue { lines } => Some(lines),
-            _ => None,
-        })
-        .expect("game4 should contain a Dialogue component");
+        .find(|n| n.components.contains_key("Dialogue"))
+        .expect("game4 should carry an opaque Dialogue component");
+    assert!(
+        story.mesh.is_none() && story.sprite.is_none(),
+        "the story node draws nothing"
+    );
 
-    assert_eq!(scene.name, "terminal-hearts");
-    assert_eq!(lines.len(), 5);
+    let raw = std::fs::read_to_string(games.join("scene.ron")).unwrap();
+    assert!(
+        !raw.contains("speaker:"),
+        "dialogue text must not live in scene.ron"
+    );
+    assert!(games.join("story.tres.ron").exists(), "story resource missing");
 }
 
 // -- Persistence test (still needs the scene.ron roundtrip assertion) --

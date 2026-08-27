@@ -7,7 +7,7 @@ use scene::Scene;
 use super::hierarchy::HierarchyState;
 use super::inspector::InspectorState;
 use super::loader::Loader;
-use super::overlay::{OverlayAnchor, OverlayState, TextBoxOverlay};
+use super::overlay::OverlayState;
 use super::project::ProjectState;
 use super::run::RunState;
 use crate::config::ViewportMode;
@@ -20,6 +20,22 @@ pub enum PanelId {
     Inspector,
     Project,
     Terminal,
+}
+
+/// Translate a terminal key to the code the game ABI shares. The IDE assigns
+/// no meaning; that is the game's action map's job.
+fn key_code(code: KeyCode) -> Option<u32> {
+    use gametok_abi::keys;
+    Some(match code {
+        KeyCode::Char(' ') => keys::SPACE,
+        KeyCode::Char(c) => (c.to_ascii_lowercase() as u32),
+        KeyCode::Left => keys::LEFT,
+        KeyCode::Right => keys::RIGHT,
+        KeyCode::Up => keys::UP,
+        KeyCode::Down => keys::DOWN,
+        KeyCode::Enter => keys::ENTER,
+        _ => return None,
+    })
 }
 
 const PANEL_ORDER: [PanelId; 5] = [
@@ -112,57 +128,23 @@ impl AppState {
             .or_else(|| self.current_scene())
     }
 
-    /// Enter / leave running (play) mode.
+    /// Enter / leave running (play) mode. A game with a built module is driven
+    /// by it; one without just ticks a clock.
     pub fn toggle_run(&mut self) {
         if self.run.take().is_none() {
-            if let Some(scene) = self.current_scene() {
-                self.run = Some(RunState::new(scene.clone()));
+            self.run = self.start_run();
+            if self.run.is_some() {
                 self.focused = PanelId::Viewport;
-                self.sync_run_overlay();
             }
-        } else {
-            self.overlays.dismiss("run-messages");
         }
     }
 
-    fn sync_run_overlay(&mut self) {
-        let Some(run) = &self.run else {
-            self.overlays.dismiss("run-messages");
-            return;
-        };
-
-        let text_box = if let Some(line) = run.current_dialogue() {
-            let (index, total) = run.dialogue_progress().unwrap_or((0, 0));
-            let title = if line.speaker.is_empty() {
-                "Narration".to_string()
-            } else {
-                line.speaker.clone()
-            };
-            TextBoxOverlay::new(
-                "run-messages",
-                [
-                    line.text.clone(),
-                    format!("Space: next  [{}/{}]  ·  esc: stop", index + 1, total),
-                ],
-            )
-            .title(title)
-            .anchor(OverlayAnchor::BottomLeft)
-            .width(64)
-            .max_height(8)
-        } else if run.has_dialogue() {
-            TextBoxOverlay::new(
-                "run-messages",
-                ["End of dialogue.", "n: next game  ·  esc: stop"],
-            )
-            .title("End")
-            .anchor(OverlayAnchor::BottomLeft)
-            .width(48)
-            .max_height(6)
-        } else {
-            self.overlays.dismiss("run-messages");
-            return;
-        };
-        self.overlays.show(text_box);
+    fn start_run(&self) -> Option<RunState> {
+        let game = self.loader.current_game()?;
+        Some(match &game.module {
+            Some(path) => RunState::with_module(game.scene.clone(), path),
+            None => RunState::new(game.scene.clone()),
+        })
     }
 
     /// Advance run-mode systems; no-op while editing.
@@ -214,30 +196,24 @@ impl AppState {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
-        // Running mode swallows input like the real game runner. Dialogue
-        // scenes use Space for the next line; other games use it to jump.
+        // Play mode. Gameplay keys are resolved by the running game's action
+        // map, not here; the IDE only keeps the keys that leave or switch a run.
         if self.run.is_some() {
             match key.code {
-                KeyCode::Char(' ') => {
-                    if let Some(run) = &mut self.run {
-                        if run.has_dialogue() {
-                            run.advance_dialogue();
-                        } else {
-                            run.queue_jump();
-                        }
-                    }
-                    self.sync_run_overlay();
-                }
                 KeyCode::Char('n') => {
                     self.switch_to_next_game();
-                    self.run = self.current_scene().cloned().map(RunState::new);
-                    self.sync_run_overlay();
+                    self.run = self.start_run();
                 }
                 KeyCode::Esc => {
                     self.run = None;
-                    self.overlays.dismiss("run-messages");
                 }
-                _ => {}
+                other => {
+                    // Everything else is gameplay: hand the raw code over and
+                    // let the game's action map decide what it means.
+                    if let (Some(run), Some(code)) = (self.run.as_mut(), key_code(other)) {
+                        run.key(code);
+                    }
+                }
             }
             return;
         }

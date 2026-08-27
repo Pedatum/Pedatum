@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -24,8 +25,12 @@ pub struct Node {
     pub sprite: Option<Sprite>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tilemap: Option<Tilemap>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub components: Vec<ComponentValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collider: Option<Collider>,
+    /// Game components, keyed by type name. The engine stores them opaquely;
+    /// a game's compiled module deserializes each value into its own type.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub components: BTreeMap<String, ron::Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Node>,
 }
@@ -48,7 +53,7 @@ impl Default for Transform {
     }
 }
 
-/// Reference to a mesh asset (e.g., `assets/obj/bunny.obj`). Path is
+/// Reference to a mesh asset (e.g., `assets/obj/<name>.obj`). Path is
 /// workspace-relative — runtime resolves it the same way the existing
 /// `Mesh::from_obj_file(path)` already does.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -103,12 +108,12 @@ pub struct Tile {
     pub color: [f32; 3],
 }
 
-/// One visual-novel style line shown by a `Dialogue` component.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DialogueLine {
-    /// Name displayed in the dialogue box title. Use an empty string for narration.
-    pub speaker: String,
-    pub text: String,
+/// Collision volume, in world units. Authored, never derived from a visual, so
+/// a scene plays identically under every View.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Collider {
+    /// Full extents, centered on the node's translation.
+    pub size: [f32; 2],
 }
 
 impl Scene {
@@ -124,26 +129,6 @@ impl Scene {
         let scene: Scene = ron::from_str(&raw)?;
         Ok(scene)
     }
-}
-
-/// Generic component value attached to a Node. Behavior tags are interpreted
-/// by the frontend's running mode; future components can extend the enum.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum ComponentValue {
-    /// Run mode: this node is the player (gravity + space-to-jump).
-    PlayerControlled,
-    /// Run mode: translate along X by `speed` units/sec; once past `wrap_at`
-    /// (below it for negative speed, above it for positive), snap back to
-    /// `reset_to`.
-    ScrollX {
-        speed: f32,
-        wrap_at: f32,
-        reset_to: f32,
-    },
-    /// Run mode: colliding with the player resets the run.
-    Obstacle,
-    /// Run mode: show these lines in order, advancing one line per Space press.
-    Dialogue { lines: Vec<DialogueLine> },
 }
 
 /// Top-level type stored in `tscn.ron` — describes the camera the editor /
@@ -177,6 +162,11 @@ pub enum Projection {
 mod tests {
     use super::*;
 
+    /// Build an opaque game-component value the way a scene file would carry it.
+    fn comp(ron_src: &str) -> ron::Value {
+        ron::from_str(ron_src).expect("component value should parse")
+    }
+
     fn sample_scene() -> Scene {
         Scene {
             name: "town".into(),
@@ -184,46 +174,31 @@ mod tests {
             nodes: vec![
                 Node {
                     name: "ground".into(),
-                    transform: Transform::default(),
-                    mesh: None,
-                    sprite: None,
                     tilemap: Some(Tilemap {
                         tileset: "tilesets/town.tres.ron".into(),
                         tile_size: [1.0, 1.0],
                         cells: vec![
-                            Cell {
-                                x: 0,
-                                y: 0,
-                                tile_id: 1,
-                            },
-                            Cell {
-                                x: 1,
-                                y: 0,
-                                tile_id: 1,
-                            },
-                            Cell {
-                                x: 2,
-                                y: 0,
-                                tile_id: 5,
-                            },
+                            Cell { x: 0, y: 0, tile_id: 1 },
+                            Cell { x: 1, y: 0, tile_id: 1 },
+                            Cell { x: 2, y: 0, tile_id: 5 },
                         ],
                     }),
-                    components: vec![],
-                    children: vec![],
+                    ..Default::default()
                 },
                 Node {
-                    name: "bunny".into(),
+                    name: "prop".into(),
                     transform: Transform {
                         translation: [3.0, 0.0, 2.0],
                         ..Default::default()
                     },
                     mesh: Some(MeshRef {
-                        path: "assets/obj/bunny.obj".into(),
+                        path: "assets/obj/prop.obj".into(),
                     }),
-                    sprite: None,
-                    tilemap: None,
-                    components: vec![ComponentValue::PlayerControlled],
-                    children: vec![],
+                    components: BTreeMap::from([(
+                        "SomeGameComponent".into(),
+                        comp("(a: -32.0, b: 10.5)"),
+                    )]),
+                    ..Default::default()
                 },
             ],
         }
@@ -233,21 +208,9 @@ mod tests {
         Tileset {
             name: "town_tiles".into(),
             tiles: vec![
-                Tile {
-                    id: 1,
-                    name: "grass".into(),
-                    color: [0.4, 0.8, 0.3],
-                },
-                Tile {
-                    id: 2,
-                    name: "river".into(),
-                    color: [0.2, 0.5, 0.9],
-                },
-                Tile {
-                    id: 5,
-                    name: "path".into(),
-                    color: [0.7, 0.6, 0.4],
-                },
+                Tile { id: 1, name: "grass".into(), color: [0.4, 0.8, 0.3] },
+                Tile { id: 2, name: "river".into(), color: [0.2, 0.5, 0.9] },
+                Tile { id: 5, name: "path".into(),  color: [0.7, 0.6, 0.4] },
             ],
         }
     }
@@ -277,24 +240,16 @@ mod tests {
     }
 
     #[test]
-    fn sprite_and_run_components_roundtrip() {
+    fn sprite_and_collider_roundtrip() {
         let n = Node {
-            name: "dino".into(),
+            name: "actor".into(),
             sprite: Some(Sprite {
                 sheet: "assets/images/2x2_grid.png".into(),
                 grid: [2, 2],
                 cell: [0, 0],
                 size: [1.2, 1.2],
             }),
-            components: vec![
-                ComponentValue::PlayerControlled,
-                ComponentValue::Obstacle,
-                ComponentValue::ScrollX {
-                    speed: -3.0,
-                    wrap_at: -7.0,
-                    reset_to: 7.5,
-                },
-            ],
+            collider: Some(Collider { size: [0.84, 0.84] }),
             ..Default::default()
         };
         let s = ron::ser::to_string_pretty(&n, Default::default()).unwrap();
@@ -302,45 +257,44 @@ mod tests {
         assert_eq!(n, n2);
     }
 
+    /// Game components are opaque to the engine: any type name with any payload
+    /// round-trips without the scene crate knowing the type.
     #[test]
-    fn dialogue_component_roundtrip() {
+    fn unknown_game_components_roundtrip() {
         let n = Node {
-            name: "story".into(),
-            components: vec![ComponentValue::Dialogue {
-                lines: vec![
-                    DialogueLine {
-                        speaker: "Narrator".into(),
-                        text: "The terminal flickers awake.".into(),
-                    },
-                    DialogueLine {
-                        speaker: "Mina".into(),
-                        text: "You made it.".into(),
-                    },
-                ],
-            }],
+            name: "actor".into(),
+            components: BTreeMap::from([
+                ("SomeGameComponent".into(), comp("(a: -32.0, b: 10.5)")),
+                ("AnotherComponent".into(), comp("()")),
+                ("ThirdComponent".into(), comp("(speed: -3.0, wrap: -7.0)")),
+                ("SomeFutureComponent".into(), comp("(anything: [1, 2, 3])")),
+            ]),
             ..Default::default()
         };
-        let serialized = ron::ser::to_string_pretty(&n, Default::default()).unwrap();
-        let roundtrip: Node = ron::from_str(&serialized).unwrap();
-        assert_eq!(n, roundtrip);
+        let s = ron::ser::to_string_pretty(&n, Default::default()).unwrap();
+        let n2: Node = ron::from_str(&s).unwrap();
+        assert_eq!(n, n2);
+    }
+
+    /// A component the engine has never heard of must not be a parse error —
+    /// resolution is the game module's job, at registry time.
+    #[test]
+    fn scene_with_unregistered_component_still_parses() {
+        let src = r#"(
+            name: "x",
+            nodes: [ ( name: "n", components: { "Whatever": (a: 1, b: "two") } ) ],
+        )"#;
+        let sc: Scene = ron::from_str(src).unwrap();
+        assert!(sc.nodes[0].components.contains_key("Whatever"));
     }
 
     #[test]
     fn node_with_no_optional_fields_serializes_compactly() {
-        let n = Node {
-            name: "empty".into(),
-            ..Default::default()
-        };
+        let n = Node { name: "empty".into(), ..Default::default() };
         let s = ron::to_string(&n).unwrap();
-        // skip_serializing_if works — the `mesh`, `tilemap`, `components`,
-        // `children` fields should not appear when None/empty.
-        assert!(!s.contains("mesh:"), "mesh should be skipped: {s}");
-        assert!(!s.contains("tilemap:"), "tilemap should be skipped: {s}");
-        assert!(
-            !s.contains("components:"),
-            "components should be skipped: {s}"
-        );
-        assert!(!s.contains("children:"), "children should be skipped: {s}");
+        for field in ["mesh:", "sprite:", "tilemap:", "collider:", "components:", "children:"] {
+            assert!(!s.contains(field), "{field} should be skipped: {s}");
+        }
     }
 
     #[test]
@@ -356,8 +310,7 @@ mod tests {
     fn save_creates_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test_scene.scn.ron");
-        let s = sample_scene();
-        s.save(&path).unwrap();
+        sample_scene().save(&path).unwrap();
         assert!(path.exists());
         let raw = std::fs::read_to_string(&path).unwrap();
         let _: Scene = ron::from_str(&raw).unwrap();
@@ -365,7 +318,6 @@ mod tests {
 
     #[test]
     fn load_nonexistent_returns_error() {
-        let result = Scene::load(Path::new("/tmp/nonexistent_scene_12345.ron"));
-        assert!(result.is_err());
+        assert!(Scene::load(Path::new("/tmp/nonexistent_scene_12345.ron")).is_err());
     }
 }

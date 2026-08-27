@@ -12,6 +12,8 @@ pub struct GameEntry {
     pub name: String,
     pub dir: PathBuf,
     pub scene: Scene,
+    /// The module `shinra build` produces for this game, if it has been built.
+    pub module: Option<PathBuf>,
 }
 
 impl Loader {
@@ -33,10 +35,18 @@ impl Loader {
                 .with_context(|| format!("read {}", scene_path.display()))?;
             let scene: Scene = ron::from_str(&raw)
                 .with_context(|| format!("parse {}", scene_path.display()))?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            // <project>/assets/games/<name> -> <project>/target/games/lib<name>.so
+            let module = games_dir
+                .parent()
+                .and_then(|p| p.parent())
+                .map(|project| project.join(format!("target/games/lib{name}.so")))
+                .filter(|p| p.exists());
             games.push(GameEntry {
-                name: entry.file_name().to_string_lossy().into_owned(),
+                name,
                 dir: path,
                 scene,
+                module,
             });
         }
         games.sort_by(|a, b| a.name.cmp(&b.name));

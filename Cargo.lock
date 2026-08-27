@@ -2043,6 +2043,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc6fe69c597f9c37bfeeeeeb33da3530379845f10be461a66d16d03eca2ded77"
 
 [[package]]
+name = "shinra-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gametok-abi",
+ "ron",
+ "scene",
+ "serde",
+ "shinra-engine",
+]
+
+[[package]]
 name = "shinra-engine"
 version = "0.1.0"
 dependencies = [
@@ -2053,9 +2065,11 @@ dependencies = [
  "glam",
  "hecs",
  "image",
+ "libloading",
  "pollster",
  "ron",
  "scene",
+ "tempfile",
  "tobj",
  "viuer",
  "wgpu",
@@ -2301,6 +2315,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "crossterm 0.28.1",
+ "gametok-abi",
  "glam",
  "image",
  "libc",

@@ -47,16 +47,10 @@ fn panel_block(title: &str, focused: bool) -> Block<'_> {
 
 fn draw_menu_bar(f: &mut Frame, area: Rect, app: &AppState) {
     let left = " File  Edit  View  Run";
+    // The IDE shows only the keys it owns. What gameplay keys do is the
+    // running game's business, resolved through its own action map.
     let game_info = if let Some(run) = &app.run {
-        let action = if run.has_dialogue() {
-            "space next text"
-        } else {
-            "space jump"
-        };
-        format!(
-            " RUNNING {:.1}s — {action} · n next · esc stop",
-            run.elapsed
-        )
+        format!(" RUNNING {:.1}s — n next · esc stop", run.elapsed)
     } else if let Some(game) = app.loader.current_game() {
         format!(
             " game {}/{}: {}",
