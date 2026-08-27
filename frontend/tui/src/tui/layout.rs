@@ -109,10 +109,29 @@ pub fn draw(f: &mut Frame, app: &AppState, viewport: Option<&mut Viewport>) -> P
         ViewportMode::Braille => Some(TextArtMode::Braille),
         ViewportMode::Image => None,
     };
+    let canvas = app.loader.current_game().and_then(|g| g.canvas.as_ref());
     match (viewport, app.display_scene()) {
         (Some(vp), Some(scene)) => {
             if let Some(mode) = text_mode {
-                let text = vp.render_text(scene, mode, vp_inner.width, vp_inner.height);
+                // With a canvas, the panel draws the screen: the game picture is
+                // one node in it and any UI is a sibling. Without one, the world
+                // directly.
+                let text = match canvas {
+                    Some(canvas) => {
+                        let mut host = super::viewport::WorldHost {
+                            viewport: vp,
+                            world: scene,
+                            mode,
+                        };
+                        super::canvas::composite(
+                            canvas,
+                            &mut host,
+                            vp_inner.width,
+                            vp_inner.height,
+                        )
+                    }
+                    None => vp.render_text(scene, mode, vp_inner.width, vp_inner.height),
+                };
                 f.render_widget(Paragraph::new(text), vp_inner);
             } else {
                 vp.render_scene(scene);
@@ -124,7 +143,6 @@ pub fn draw(f: &mut Frame, app: &AppState, viewport: Option<&mut Viewport>) -> P
             f.render_widget(Paragraph::new("(no preview)"), vp_inner);
         }
     }
-    super::overlay::draw(f, vp_inner, &app.overlays);
 
     super::inspector::draw(
         f,

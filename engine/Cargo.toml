@@ -13,8 +13,6 @@ bytemuck = { version = "1", features = ["derive"] }
 glam = "0.28"
 tobj = "4"
 image = "0.25"
-viuer = "0.11"
-crossterm = "0.27"
 anyhow = "1"
 gametok-abi = { path = "../abi" }
 hecs = "0.10"

@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-pub mod terminal;
 pub mod window;
 
 pub struct FrameCtx<'a> {

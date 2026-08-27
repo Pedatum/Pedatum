@@ -14,6 +14,8 @@ pub struct GameEntry {
     pub scene: Scene,
     /// The module `shinra build` produces for this game, if it has been built.
     pub module: Option<PathBuf>,
+    /// The screen: the game picture plus whatever UI sits beside it.
+    pub canvas: Option<scene::Canvas>,
 }
 
 impl Loader {
@@ -27,14 +29,17 @@ impl Loader {
             if !path.is_dir() {
                 continue;
             }
-            let scene_path = path.join("scene.ron");
-            if !scene_path.exists() {
+            // A game folder is one that has a game.ron. The world it simulates
+            // is what the IDE's viewport draws.
+            let manifest = path.join("game.ron");
+            if !manifest.exists() {
                 continue;
             }
-            let raw = std::fs::read_to_string(&scene_path)
-                .with_context(|| format!("read {}", scene_path.display()))?;
+            let world_path = path.join("world.ron");
+            let raw = std::fs::read_to_string(&world_path)
+                .with_context(|| format!("read {}", world_path.display()))?;
             let scene: Scene = ron::from_str(&raw)
-                .with_context(|| format!("parse {}", scene_path.display()))?;
+                .with_context(|| format!("parse {}", world_path.display()))?;
             let name = entry.file_name().to_string_lossy().into_owned();
             // <project>/assets/games/<name> -> <project>/target/games/lib<name>.so
             let module = games_dir
@@ -42,11 +47,17 @@ impl Loader {
                 .and_then(|p| p.parent())
                 .map(|project| project.join(format!("target/games/lib{name}.so")))
                 .filter(|p| p.exists());
+            // A canvas is optional: without one the viewport draws the world
+            // directly, which is what the editor does anyway.
+            let canvas = std::fs::read_to_string(path.join("canvas.ron"))
+                .ok()
+                .and_then(|raw| ron::from_str::<scene::Canvas>(&raw).ok());
             games.push(GameEntry {
                 name,
                 dir: path,
                 scene,
                 module,
+                canvas,
             });
         }
         games.sort_by(|a, b| a.name.cmp(&b.name));

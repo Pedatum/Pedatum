@@ -18,8 +18,29 @@ pub fn action(name: String) -> bool {
 pub fn action_pressed(name: String) -> bool {
     shinra_engine::script::action_pressed(&name)
 }
-pub fn overlapping(a: String, b: String) -> Vec<(String, String)> {
+pub fn axis(name: String) -> f32 {
+    shinra_engine::script::axis(&name)
+}
+/// One contact, in the shape a script wants: the other object's name and how to
+/// push out of it. Flat floats because a script reads `h.normal_x`, not an array.
+#[derive(Clone, Debug, Default)]
+pub struct Hit {
+    pub other: String,
+    pub normal_x: f32,
+    pub normal_y: f32,
+    pub depth: f32,
+}
+
+pub fn overlapping(a: String, b: String) -> Vec<Hit> {
     shinra_engine::script::overlapping(&a, &b)
+        .into_iter()
+        .map(|h| Hit {
+            other: h.b_node,
+            normal_x: h.normal[0],
+            normal_y: h.normal[1],
+            depth: h.depth,
+        })
+        .collect()
 }
 pub fn restart() {
     shinra_engine::script::restart()

@@ -174,7 +174,13 @@ impl SpriteRenderer {
         queue: &wgpu::Queue,
         sprite: &scene_format::Sprite,
     ) -> Option<SpriteDraw> {
-        let texture = self.texture(device, queue, &sprite.sheet)?;
+        // A sprite backed by another view is drawn once that view's texture
+        // exists; this pass only knows how to load images.
+        let path = match &sprite.source {
+            scene_format::TexSource::Png(path) => path,
+            scene_format::TexSource::View(_) => return None,
+        };
+        let texture = self.texture(device, queue, path)?;
         let mesh = self.mesh(device, sprite.grid, sprite.cell);
         Some(SpriteDraw { mesh, texture })
     }

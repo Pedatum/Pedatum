@@ -4,480 +4,392 @@
 
 | | Is |
 |---|---|
-| **World** | entities and components; the DataPipeline's domain |
-| **View** | a GraphicsPipeline that renders as a texture |
+| **Render unit** | a `world` or a `canvas`: the thing a View renders |
+| **World** | entities and components in space. No camera |
+| **Canvas** | a 2D tree, in surface units. UI lives here. No camera |
+| **View** | points at a render unit, holds a camera, produces a texture |
+| **Stage** | a conversion between the two texture types |
 
-A View is an entity. It names the World it renders, which need not be the World
-it lives in. Its kind is `View3D`, `View2D` or `ViewText`; its output is a
-texture of a declared type and size — `Pixels` or `Cells`.
-
-Every View renders to a texture. There is no direct-to-screen path: the surface
-takes a texture like any other consumer.
-
-A View's texture is referenceable by any entity in any World.
+One pointing relation, one level each:
 
 ```
-World A (entities + systems)        World B (entities + systems)
-  |                                   ^
-  | holds a View entity               | the View names B as its target
-  v                                   |
-View (3D | 2D | Unicode) -------------+
-  |
-  | --stages--> texture (Pixels | Cells)
-  v
-ViewRef, sampled by an entity in any World
+game.ron ──> views ──> render units   (world | canvas)
 ```
 
-By convention the root View's entity is named `game_camera`: the main camera,
-the largest subject of the game. The IDE holds its own editor camera, separate
-from the game camera.
+`game.ron` names views and nothing else. A view names one render unit. A render
+unit's objects name views as textures. The view named `main` is the root.
 
-## Terminology
+A View is independent: it belongs to neither the render unit it targets nor the
+one that samples it. Objects reach a View's output the same way they reach an
+image — as a texture.
 
-| Term | Is |
-|---|---|
-| **Pixel** | one colour sample. A `Pixels` frame is a grid of them. |
-| **Cell** | one terminal character slot: a character plus a foreground colour, optionally a background. Indivisible, so a `Cells` frame cannot be scaled. Roughly 1:2 (width:height). |
-| **`Pixels`** / **`Cells`** | the two frame types. Both are textures; they differ in element type. |
-| **Character art** | characters arranged to depict a thing, authored by hand. The `CharArt` component. |
-| **Font atlas** | one PNG holding the bitmap of every character, indexed by codepoint. A resource, not a stage. |
-| **Atlas** | any single image holding many sub-images addressed by index. A sprite sheet is an atlas; so is a font atlas. |
-| **`GlyphSet`** | which characters `ToCells` may emit: `Mixed`, `Quadrant`, `Braille`. |
-| **Stage** | a conversion between the two frame types: `ToCells`, `ToPixels`. |
+Usually the outermost render unit is a canvas, with a node whose texture is a
+View of a world. That is what makes UI ordinary: the HUD is a sibling of the
+game picture, not something layered onto it by the host.
 
-`ToCells` samples 2×4 subpixels per cell and thresholds each by luminance,
-giving 8 bits per cell — the braille dot layout. `ToPixels` draws one quad per
-cell, its uv addressing that character in the font atlas.
+## Files
 
-The character set is closed: braille U+2800–U+28FF (256), quadrant blocks (16),
-box drawing, printable ASCII. About 400 characters, so the font atlas is baked
-rather than rasterised at runtime.
+A subtree is written inline or replaced by a reference:
 
-## Layering
+```
+Node        = inline | Ref("path.ron")
+RenderUnit  = Ref("world.ron") | Ref("canvas.ron")
+```
 
-The engine provides core capability. A game provides its own behaviour, in
-`.hom`, in its own project. The engine contains no game rule and no tuning
-constant.
+Convention: one render unit per file, because a render unit is a View's unit of
+work. Splitting further is the author's choice, not the format's requirement.
 
-| Engine core | Game (`.hom`) |
-|---|---|
-| World, entities, component registry | its own component types |
-| Views, stages, render graph | its cameras' behaviour |
-| transform propagation | gravity, jump, scrolling, collision response |
-| asset loading | dialogue flow, win/lose rules |
-| raw input events, action-map resolution | its action map and key choices |
-| scene serialization, scheduler | its tuning constants |
+```
+assets/games/game3/
+  game.ron          views, root render unit, action map
+  canvas.ron        the screen: the game picture plus its HUD
+  world.ron         entities and components
+  input.tres.ron    action map
+  player.hom  scroller.hom  obstacle.hom
+```
 
-Three mechanisms make this possible.
+## `game.ron`
 
-### Open component registry
-
-Engine-core components are typed. Game components are open, keyed by type name
-and resolved through a registry the game's compiled `.hom` module populates.
+Every View the game needs, in one place, so its rendering cost is legible at a
+glance. `main` is the root.
 
 ```ron
-components: {
-    "PlayerControlled": ( jump_velocity: 10.5, gravity: -32.0 ),
-    "Obstacle": (),
-}
-```
-
-An unregistered component name is a load error naming the component and the
-module expected to provide it. Adding a game behaviour never edits the engine.
-
-### Named input actions
-
-The engine emits raw key events and resolves them against an action map the game
-declares. The engine binds no key to any meaning.
-
-```ron
-// games/dino-run/input.tres.ron
 (
-    actions: { "jump": [ Key(Space) ], "advance": [ Key(Space) ] },
-    axes:    { "move_x": ( neg: [ Key(A), Key(Left) ], pos: [ Key(D), Key(Right) ] ) },
+    name:  "dino-run",
+    input: "input.tres.ron",
+
+    views: {
+        "main": (
+            unit:     Ref("canvas.ron"),
+            graphics: View2D,
+            camera:   ( projection: Screen ),
+            size:     Fill,
+        ),
+        "game": (
+            unit:     Ref("world.ron"),
+            graphics: View2D,
+            camera:   ( projection: Orthographic( half_height: 2.6 ) ),
+            size:     Fill,
+        ),
+        "mirror": (
+            unit:     Ref("world.ron"),
+            graphics: View3D,
+            camera:   (
+                projection: Perspective( fov_y_degrees: 60.0, znear: 0.1, zfar: 100.0 ),
+                anchor: Some(( node: "rear_mirror", offset: (0.0, 0.0, 0.0), facing: Backward )),
+            ),
+            size:     Pixels(256, 128),
+        ),
+    },
 )
 ```
 
-A system reads `action("jump")`, never a key code.
+## World
 
-### Game-provided systems
+Entities with components. No camera: where a world is seen from is a View's
+business, and the player's.
 
-Systems come from the game's `.hom` module and are registered against the
-component types they read. The engine ships only the systems its own core
-components require.
-
-| Engine system | Reads |
-|---|---|
-| transform propagation | `Parent`, `Transform` |
-| message delivery | `Port` |
-
-Every other system belongs to a game.
-
-A system is a Homun lambda. Its parameter list is its query: `x::T` binds a
-component mutably, `x: T` immutably, and `dt: float` is the tick delta.
-
+```ron
+World((
+    name: "dino-run",
+    nodes: [
+        (
+            name: "dino",
+            transform: ( translation: (-3.0, 0.0, 0.2), rotation: (0.0, 0.0, 0.0, 1.0), scale: (1.0, 1.0, 1.0) ),
+            sprite:   Some(( source: Png("assets/images/2x2_grid.png"), grid: (2, 2), cell: (0, 0), size: (1.2, 1.2) )),
+            collider: Some(( shape: Box, size: (0.84, 0.84) )),
+            components: {
+                "PlayerControlled": ( gravity: -32.0, jump_velocity: 10.5, vy: 0.0 ),
+            },
+        ),
+        (
+            name: "rear_mirror",
+            transform: ( … ),
+            sprite: Some(( source: View("mirror"), size: (0.6, 0.2) )),
+        ),
+    ],
+))
 ```
-player_system := (t::Transform, p::PlayerControlled, dt: float) -> _ { .. }
+
+Node fields: `transform`, `sprite`, `mesh`, `tilemap`, `collider`, `components`,
+`children`. A node with none of the visual fields draws nothing and is exempt
+from every visual check.
+
+## Canvas
+
+A 2D tree in surface units. Layout replaces a transform: a canvas node is placed
+by rule, not by a matrix.
+
+```ron
+Canvas((
+    name: "dino-run",
+    nodes: [
+        ( name: "viewport", rect: ( fill: true ),
+          sprite: Some(( source: View("game") )) ),
+
+        ( name: "score_bg", rect: ( anchor: TopRight, size: (16, 1), offset: (-1, 1) ),
+          color_rect: Some(( color: (0.0, 0.0, 0.0, 0.5) )) ),
+
+        ( name: "score", rect: ( anchor: TopRight, offset: (-2, 1) ),
+          text: Some(( from: "Run.crashes", format: "crashes: {}" )) ),
+    ],
+))
 ```
 
-### Script-facing API
+Node fields: `rect`, `sprite`, `text`, `color_rect`, `children`.
 
-The surface the engine exposes to `.hom`. Everything outside it is engine
-internals.
+`rect`: `anchor` (`TopLeft` … `BottomRight`, `Center`), `offset`, `size`, `fill`.
 
-| Module | Provides |
-|---|---|
-| `engine` | `Transform`, `Vec2`, `Vec3`, `Collider`, `CellPos` |
-| `engine::math` | `cos`, `sin`, `sqrt`, `floor` — `use std` carries only `abs`, `min`, `max`, `clamp` |
-| `engine::input` | `action(name) -> bool` held, `action_pressed(name) -> bool` one-shot |
-| `engine::world` | `overlapping(a, b)` collider pairs by component name, `restart()`, `spawn`, `despawn` |
+A canvas is rendered by a view whose camera projection is `Screen`: one canvas
+unit to one surface unit, no transform.
 
-`engine::input` never exposes a key code. `engine::world::overlapping` is the
-only pair query; single-entity systems cannot see other entities.
-
-## Pipelines
-
-| | **DataPipeline** | **View** |
-|---|---|---|
-| Is | `hecs::World` + systems | a component query → a frame |
-| Owns | object state | nothing; read-only |
-| Runs on | CPU, parallelisable | GPU (3D/2D), CPU (Unicode) |
-| Input | scene file, input events, dt | World query, camera |
-| Output | mutated World | a frame |
-
-State lives only in the DataPipeline. Views never write to a World.
-
-## Runtime model
-
-`hecs::World` is the runtime model. `Vec<Node>` in RON is serialization only;
-the boundary is crossed at load and at save.
-
-- `Transform` is local. `GlobalTransform` is a separate component, derived by a
-  propagation system from `Transform` + `Parent`, read-only, not serialized.
-- Sibling order is explicit: `SiblingIndex(u32)`.
-- `Parent(Entity)` carries hierarchy. RON `Node.children` maps to `Parent` on
-  load; `Parent` + `SiblingIndex` reconstruct the tree on save.
-
-## Components
-
-| Component | Type | Read by |
-|---|---|---|
-| `Name` | `String`, unique per World | `ViewRef` resolution |
-| `Transform` | translation, rotation, scale; local | propagation |
-| `GlobalTransform` | `Mat4`; derived, not serialized | all Views |
-| `Parent` | `Entity`; absent = root | propagation |
-| `SiblingIndex` | `u32` | save |
-| `MeshRef` | path | `View3D` |
-| `Sprite` | sheet path or `ViewRef`, grid, cell, size | `View2D` |
-| `Tilemap` | tileset, tile_size, cells | `View2D` |
-| `ColorRect` | size, color | `View2D` |
-| `CellPos` | `(i32, i32)` | `ViewText` |
-| `CharArt` | art or file, fg, bg, anchor | `ViewText` |
-| `Layer` | `i32`; draw order within a View | all Views |
-| `Camera` | projection or `CellViewport` | the View on the same entity |
-| `View` | world, camera, kind, stages, out, size, update | render scheduler |
-| `Collider` | half extents, shape | a game's collision system |
-| `Port` | `MessagePort` | message delivery |
-
-These are the engine's core components. Game components are registered by the
-game's `.hom` module and stored under their type name.
+`text.from` names a component field in a world, so a HUD reads live state
+without a system pushing it.
 
 ## View
 
 ```rust
 pub struct View {
-    pub world:  WorldId,      // the World to render; may differ from the host World
-    pub camera: CameraSource, // SelfEntity | Entity(EntityId) | Inline(Camera)
-    pub kind:   ViewKind,     // View3D | View2D | ViewText
-    pub stages: Vec<Stage>,
-    pub out:    OutKind,      // Pixels | Cells
-    pub size:   Extent,       // Pixels(w, h) | Cells(cols, rows)
-    pub update: Update,       // Always | Once | Never
+    pub unit:     RenderUnit,   // Ref("world.ron") | Ref("canvas.ron")
+    pub graphics: GraphicsKind, // View3D | View2D | ViewText
+    pub camera:   Camera,
+    pub stages:   Vec<Stage>,
+    pub size:     Extent,       // Fill | Pixels(w, h) | Cells(cols, rows)
+    pub update:   Update,       // Always | Once | Never
+}
+
+pub struct Camera {
+    pub projection: Projection,        // Perspective | Orthographic | CellViewport | Screen
+    pub anchor: Option<Anchor>,        // absolute when None
+}
+
+pub struct Anchor {
+    pub node:   String,   // a node in the target unit; the View reads it, it is not one
+    pub offset: [f32; 3],
+    pub facing: Facing,   // Forward | Backward | Target([f32; 3])
 }
 ```
 
-| View kind | Queries | Natural output | Samples textures as |
-|---|---|---|---|
-| `View3D` | `(GlobalTransform, MeshRef)` | `Pixels<Native>` | `Pixels` |
-| `View2D` | `(GlobalTransform, Sprite \| Tilemap \| ColorRect)` | `Pixels<Native>` | `Pixels` |
-| `ViewText` | `(CellPos \| GlobalTransform, CharArt)` | `Cells<Native>` | `Cells` |
-
-- `out` and `size` state how drawing happens. `stages` bridge the natural output
-  to `out`.
-- A View retains its last frame. `update` gates re-rendering, not the World's
+- A View retains its last texture. `update` gates re-rendering, not the target's
   tick.
-- The camera is always expressed in the target World's coordinate space:
-  - `SelfEntity` — `Camera` + `GlobalTransform` on the View's own entity. Valid
-    only when `world` is the View's host World; a follow-cam is this plus
-    `Parent`.
-  - `Entity(id)` — a camera entity in the target World.
-  - `Inline(Camera)` — an explicit camera in the target World's space.
+- `anchor` lets a camera follow a node — a mirror on a car, a camera behind a
+  player — by reference, without the View being an entity.
+- Many Views may target one render unit: split-screen, a mirror, a security
+  camera. Nothing is copied.
+- `size: Fill` takes the size of whatever samples it; the root View fills the
+  surface.
 
-  `SelfEntity` with a foreign `world` is a load error.
-- A View's kind is declared. It is never inferred.
-- An entity not matching a View's query is not drawn by it. Warning at load,
-  never an error.
-- An entity may carry components for more than one View kind. Changing a View's
-  kind changes the query; the World is untouched.
-- `ViewText` reads `CellPos` when present, otherwise quantises
-  `GlobalTransform` to cells.
-- Many Views may render one World: split-screen, rear-view mirror, security
-  camera. They share the World; no state is copied.
-- One World may host Views that render other Worlds: an arcade cabinet, an
-  embedded mini-game, a UI sandbox.
-- `size` is in the View's own `out` unit. Upstream resolution is derived: a
-  `Cells(40, 20)` output through `ToPixels { cell: (8, 16) }` needs a 320×320
-  pixel render; a `Pixels(w, h)` output through `ToCells` needs ⌈w/2⌉×⌈h/4⌉ cells.
+| Graphics kind | Query | Natural texture |
+|---|---|---|
+| `View3D` | `(GlobalTransform, MeshRef)` | `Pixels<Native>` |
+| `View2D` | `(GlobalTransform, Sprite \| Tilemap \| ColorRect)` | `Pixels<Native>` |
+| `ViewText` | `(CellPos \| GlobalTransform, CharArt)` | `Cells<Native>` |
+
+An entity matching no query is not drawn by that View. A warning at load, never
+an error. `ViewText` reads `CellPos` when present, otherwise quantises
+`GlobalTransform`.
+
+## Textures
+
+```
+source = Png(path) | View(name)
+```
+
+A View named in `game.ron` is referenced by name, so one View serves any number
+of objects.
+
+**Self-reference resolves to the previous frame.** A mirror is a node in the
+world its own View renders, so that View sees the mirror; the mirror samples last
+frame's texture. This is the only cycle the format permits, and it is bounded.
+
+## Ownership
+
+The engine provides capability. A game provides its rules, in `.hom`, in its own
+project. The engine holds no game rule and no tuning constant.
+
+| Engine | Game |
+|---|---|
+| render units, views, stages, render graph | its own component types |
+| `Transform`, `Collider`, transform propagation | gravity, jumping, movement, scrolling |
+| collision **detection** | collision **response** |
+| raw keys → named actions and axes | which key, how much, how fast |
+| asset loading, scene serialization, scheduler | dialogue flow, win and lose rules |
+
+Motion is entirely the game's: the engine integrates nothing, so it never
+inserts a step into the middle of a frame.
+
+## DataPipeline
+
+`hecs::World` is the runtime model. RON is serialization only, crossed at load
+and at save.
+
+- `Transform` is local. `GlobalTransform` is derived by a propagation system from
+  `Transform` + `Parent`; read-only, not serialized.
+- `Parent(Entity)` carries hierarchy; `SiblingIndex(u32)` makes save order
+  stable.
+- Game components are stored opaquely by type name and resolved by the game's
+  compiled module. An unregistered name is a load error.
+- Mutated components are written back to their node, so a HUD and Ctrl+S see
+  live state.
+
+Systems are component-driven: a component's presence registers its system. A
+system is a Homun lambda whose parameter list is its query — `x::T` binds
+mutably, `x: T` immutably, `dt: float` is the tick delta. The engine's only
+systems are transform propagation and message delivery.
+
+## Collision
+
+Detection is the engine's; response is the game's.
+
+```rust
+pub enum Shape { Box, Ellipse }   // both axis-aligned
+pub struct Collider { shape, size, offset }   // size is the bounding box, either shape
+pub struct Hit { normal: [f32; 2], depth: f32 }   // how to move `a` off `b`
+```
+
+| Pair | Method | Depth |
+|---|---|---|
+| Box ↔ Box | least-penetration axis | exact |
+| Box ↔ Ellipse | divide by the radii: a unit circle against an axis-aligned box | estimate |
+| Ellipse ↔ Ellipse | divide by the first's radii, then Newton for the closest point | estimate |
+
+Bounding boxes are the broadphase, so the cheap pre-test does not depend on
+shape. Depth is exact only for box↔box: an anisotropic scale does not preserve
+distance, so ellipse depths push out of a penetration but do not settle a
+resting contact.
+
+`overlapping(a, b)` is a live query against current positions, not a snapshot
+taken before the game moved anything. It returns hits naming the other node, so
+a game can tell one obstacle from another.
+
+## Input
+
+The engine emits raw keys and resolves them against the game's map. It binds no
+key to any meaning.
+
+```ron
+(
+    actions: { "jump": ["Space"] },
+    axes:    { "move_x": ( neg: ["A", "Left"], pos: ["D", "Right"] ) },
+)
+```
+
+`action(name)` held, `action_pressed(name)` one-shot, `axis(name)` in −1..=1 with
+opposing keys cancelling.
 
 ## Frames and stages
 
-Two frame types. Provenance is part of the type.
+Two texture types. Origin is part of the type.
 
 ```rust
-pub struct Pixels<Origin>(/* .. */, PhantomData<Origin>);
-pub struct Cells <Origin>(/* .. */, PhantomData<Origin>);
+pub struct Pixels<Origin>;
+pub struct Cells<Origin>;
+pub struct Native;      // produced directly by a View of that type
+pub struct Converted;   // produced by a stage from the other type
 
-pub struct Native;     // produced directly by a View of that frame type
-pub struct Converted;  // produced by a stage from the other frame type
-```
-
-Two stages, forming a bijection between the frame types.
-
-```rust
 ToCells <V: ViewOut<Out = Pixels<Native>>> : Out = Cells <Converted>
 ToPixels<V: ViewOut<Out = Cells <Native>>> : Out = Pixels<Converted>
 ```
 
-`ToCells` takes a `GlyphSet`: `Mixed` | `Quadrant` | `Braille`.
-`ToPixels` takes a font atlas resource and a cell pixel size.
+`ToCells` takes a `GlyphSet` (`Mixed` | `Quadrant` | `Braille`); `ToPixels` takes
+a font atlas and a cell pixel size. Each accepts `Native` only, so a stage pair
+cannot be chained into a lossy round-trip; `ToPixels::forced` exists for the
+deliberate case. Origin is erased across a View.
 
-Each stage accepts `Native` input only, so a stage pair cannot be chained into a
-lossy round-trip. `ToPixels::forced` accepts any `Cells<_>` for the deliberate
-case.
-
-Origin is erased across a View: `Pixels<Converted>` consumed as a material
-yields `Pixels<Native>`.
-
-### Composition closure
-
-| producer output \ consumer samples | `Pixels` | `Cells` |
+| producer \ consumer samples | `Pixels` | `Cells` |
 |---|---|---|
 | `Pixels` | direct | `ToCells` |
 | `Cells` | `ToPixels` | direct |
 
 A mismatch with no stage is a load error naming both types.
 
-## Cross-World
-
-Three mechanisms, and only these:
-
-- a **View's `world`** — a View hosted in one World renders another;
-- a **`ViewRef`** — an entity samples a View's texture regardless of which World
-  either lives in;
-- a **`MessagePort`** — typed messages, bounded queue, no shared references.
-
-There is no shared entity access between Worlds. A View reads its target World;
-it never writes to it.
-
 ## Execution
 
-The render graph is a DAG: a View depends on the tick of the World it renders,
-and on every View it samples through a `ViewRef`.
+The render graph is a DAG: a View depends on the tick of the unit it renders and
+on every View it samples.
 
-1. Tick each World whose `update` allows it. Disjoint Worlds may tick in
-   parallel. A skipped World receives no dt.
-2. Render Views in topological order. Views over one World are read-only and may
+1. Tick each world whose `update` allows it. Disjoint worlds may tick in
+   parallel; a skipped world receives no dt.
+2. Render Views in topological order. Views over one unit are read-only and may
    render in parallel.
-3. Apply each View's stages to its output.
+3. Apply each View's stages to its texture.
 
-A cycle in the graph resolves to the previous frame. Depth is capped;
-scene-file reference cycles are a load error.
+A cycle resolves to the previous frame. Depth is capped; a file-reference cycle
+is a load error.
 
-Cost:
+Cost: readbacks equal the number of `ToCells` stages. A `Pixels`-only subgraph is
+one command encoder and one submit. A `Cells`-only subgraph performs no GPU work,
+so a text-only game needs no GPU driver. All `Pixels` Views share one wgpu device.
 
-- Readbacks equal the number of `ToCells` stages.
-- A `Pixels`-only subgraph is one command encoder and one submit: producer passes
-  recorded before consumer passes, produced textures sampled directly.
-- A `Cells`-only subgraph performs no GPU work.
-- All `Pixels` Views share one wgpu device and queue.
-
-## Root
-
-The surface requires a frame type; the root View must produce it.
-
-```rust
-shinra::tui(ToCells::mixed(View2D::new(path)))            // 2D      -> Cells
-shinra::tui(ToCells::braille(View3D::new(path)))          // 3D      -> Cells
-shinra::tui(ViewText::new(path))                       // Unicode -> Cells
-shinra::gui(ToPixels::default(ViewText::new(path)))  // Unicode -> Pixels
-```
-
-`shinra::tui` requires `Out = Cells<_>` and sizes the root View to the terminal.
-`shinra::gui` requires `Out = Pixels<_>`.
-
-Stages are always written explicitly; they carry parameters that are not
-inferable. There is no game-level presentation config. The `ToCells` `GlyphSet`
-is a viewer preference and lives in `ide.ron`.
-
-### IDE viewport
-
-The Viewport panel requires a frame type, following the panel's mode.
-
-| Game | Panel requires `Cells` | Panel requires `Pixels` |
-|---|---|---|
-| `View3D` / `View2D` | `ToCells` | direct |
-| `ViewText` | direct | `ToPixels` |
-
-For a `ViewText` game in a terminal there is no stage and no `GlyphSet` to
-cycle; panel size is the cell grid directly. For a `Pixels`-producing View the
-panel drives a 2×4-subpixel render target.
-
-The editor camera is a `Camera` the IDE owns, not the scene's `game_camera`: a
-projection for `View3D` / `View2D`, a `CellViewport` with integer scrolling and
-no damping for `ViewText`.
-
-## Systems
-
-Systems are component-driven: the presence of a component registers its system.
-Registration is uniform for engine and game systems; only the source differs.
-
-The engine's own systems are transform propagation (`Parent`, `Transform`) and
-message delivery (`Port`). Every other system is a game's, declared in `.hom`.
-
-No system reads a rendering component. Collision reads `Collider`.
-
-## File conventions
-
-| | Extension |
-|---|---|
-| Scene | `*.tscn.ron` |
-| Resource | `*.tres.ron` |
-
-Resources: tileset, char-art sheet, font atlas, visual set.
-
-```ron
-// assets/fonts/cp437.tres.ron
-( name: "cp437", atlas: "assets/fonts/cp437.png", cell: (8, 16), charset: Cp437 )
-```
-
-The font atlas is a baked PNG over the closed character set.
-
-### Text art
-
-| | PNG sprite | Text art |
-|---|---|---|
-| Shape | alpha | character; space is transparent |
-| Colour | RGB per pixel | palette index per cell |
-| Scaling | any | none; cells are indivisible |
-| Animation | adjacent sheet cells | frame list |
-
-v1: one character plane, per-block `fg` / `bg`.
-v2: optional same-size colour plane plus palette.
-
-Character art may be inline (`art: ["...", "..."]`) or an external `.txt` file.
-`transparent` defaults to space.
-
-## Error surfaces
+## Errors
 
 | Class | Caught at |
 |---|---|
 | Illegal stage composition | compile |
 | Adjacent stage round-trip | compile |
-| Root frame type mismatch | compile |
+| Surface texture type mismatch | compile |
 | Missing stage between producer and consumer | load |
-| Scene-file reference cycle | load |
-| Depth cap exceeded | load |
-| Declared View kind unsupported by scene | load |
+| File-reference cycle, depth cap | load |
+| Unregistered component | load |
+| `View(name)` naming no view in `game.ron` | load |
+| No view named `main` | load |
+| `anchor.node` naming no node, or ambiguous | load |
 | Entity matching no View query | warning |
-| Cross-View round-trip | warning |
 
 ## Boundaries
 
-- `ratatui` owns IDE chrome: borders, lists, scroll state, text wrapping,
-  `unicode-width`, PTY vt100. Only the Viewport panel hosts a View.
-- `core/overlay.rs` is a `ViewText` output composited over the root.
-- `hecs` is a DataPipeline concern. It does not appear in the `View` trait.
-- Scene trees are RON. View composition, component types and systems are `hom`.
-- The engine crate holds no game type, no game rule and no tuning constant.
+- `ratatui` owns IDE chrome: borders, lists, scroll state, text wrapping, PTY
+  vt100. The Viewport panel hosts a View; the other panels do not.
+- `hecs` is a DataPipeline concern and does not appear in the `View` trait.
+- Render units are RON. View composition, component types and systems are `hom`.
+- The engine crate holds no game type, rule or tuning constant.
 
 ## Status
 
 | | State |
 |---|---|
-| `View3D` | exists |
-| `ToCells` (`textart.rs`) | exists |
-| `Presenter` / `FrameCtx` | exists |
+| `View3D` (fused mesh + sprite pass) | exists as `Engine::render` |
+| `ToCells` | exists as `TextArtGpu` |
+| Collision detection, Box + Ellipse | exists as `engine::collide` |
+| Script API, module loader, v2 ABI | exists |
+| `shinra build`: `.hom` → cdylib, glue generated | exists |
 | `hecs` World | exists; rebuilt per frame, flattened |
-| `View2D` | to build |
-| `ViewText`, `CellGrid` | to build |
-| `ToPixels`, font atlas resource | to build |
-| `View` component, `ViewRef`, render graph | to build |
-| Provenance types | to build |
+| Canvas, `rect`, `text` | to build |
+| `game.ron`, named views, `Ref` | to build |
+| `View2D`, `ViewText`, `CellGrid` | to build |
+| `ToPixels`, font atlas | to build |
+| Live `overlapping`, `Hit` with identity | to build |
+| `axis()` | to build |
 | `Parent`, `GlobalTransform`, `SiblingIndex` | to build |
 | World → RON serialization | to build |
-| `MessagePort` | to build |
-| Component registry | to build |
-| Script-facing API | to build |
-| `.hom` game logic | written, not compiling |
-| Action maps | to build |
-| `homunc` in-repo | not started |
 
-### Examples
-
-| Game | View | Needs | `.hom` |
-|---|---|---|---|
-| game1 `bunny` | `View3D` | — | `orbit_camera.hom` |
-| game2 `teapot` | `View3D` | — | `orbit_camera.hom` |
-| game3 `dino-run` | `View2D` | `ColorRect`, `Layer` | `player.hom`, `scroller.hom`, `obstacle.hom` |
-| game4 `terminal-hearts` | `View2D` | `ColorRect`, `Layer` | `dialogue.hom` |
-
-Each game also carries an `input.tres.ron` action map. These files exist and
-define the target behaviour; they do not compile until `homunc` is in-repo and
-the script-facing API is implemented.
-
-What each replaces:
-
-| `.hom` | Replaces |
-|---|---|
-| `orbit_camera.hom` | `engine/src/scene.rs:89` `orbit_eye`, and `BunnyTag` / `TeapotTag` at `:61-62` |
-| `player.hom` | `GRAVITY`, `JUMP_VELOCITY` and the jump branch in `frontend/tui/src/core/run.rs` |
-| `scroller.hom` | the `ScrollX` arm of `run.rs` |
-| `obstacle.hom` | `HITBOX_HALF` and the collision branch of `run.rs` |
-| `dialogue.hom` | the dialogue index handling in `run.rs` |
-| `input.tres.ron` | the fixed five fields of `abi/src/lib.rs` `InputFrame` |
-
-After the move, `engine` and `frontend/tui` contain no game type, rule or
-constant, and `scene/src/lib.rs` `ComponentValue` is gone.
+Legacy to remove: `runner/`, `engine::input::Keymap` and the v1 `InputFrame` bake
+a specific control scheme into the engine, and nothing produces v1 modules any
+more.
 
 ### Order of work
 
-0. Component registry; named input actions; move every game rule out of
-   `engine` and `frontend/tui` into `shinra-examples/**/*.hom`. Requires
-   `homunc` in-repo.
-1. `Parent`, `GlobalTransform`, `SiblingIndex`; load once per scene; World → RON save.
-2. `View` component, `ViewRef`, provenance types, render graph; existing pass
-   becomes `View3D`.
-3. `ViewText`, `CellGrid`, character-art authoring, font atlas, `ToPixels`;
-   `overlay.rs` moves onto it.
-4. `View2D` with pixel-snapped orthographic camera, `ColorRect`, tile atlas.
-5. `MessagePort`; interactive Views.
-
-Steps 1 and 2 leave every snapshot baseline unchanged:
-`frontend/tests/snapshots/`, `engine/tests/snapshot_test.rs`,
-`engine/tests/frontend_parity_test.rs`.
+1. Remove the legacy input path and `runner`.
+2. `axis()`; live `overlapping` returning `Hit` with the other node's name.
+3. `game.ron` with named views and `Ref`; split each game's scene into a world
+   and a canvas.
+4. Canvas primitives: `rect`, `text`, `color_rect`. `overlay.rs` becomes canvas
+   nodes.
+5. `Parent`, `GlobalTransform`, `SiblingIndex`; load once per scene; save.
+6. `ViewText`, `CellGrid`, char-art authoring, font atlas, `ToPixels`.
+7. `View2D` with a pixel-snapped orthographic camera; tile atlas.
 
 ## Open questions
 
-- **Camera attachment.** `attach { node, offset, look_at, damping }` for
-  follow-cams. Damping is `alpha = 1 - exp(-dt / tau)`. Disabled for
-  `ViewText`.
-- **Deferred composite.** `composite: Immediate | Deferred` to composite an
-  authored char-art output in cell space after a root `ToCells`. Requires the host
-  surface to face the camera within a tolerance.
-- **Interactive Views.** Hierarchical input focus for playable Views.
-- **`MessagePort` shape.** Message types, queue bound, delivery ordering,
-  behaviour on a full queue.
-- **Split-screen root.** Whether the surface takes several root Views with a
-  layout, or one View whose sub-rects are written by several cameras.
-- **Binding resolution order.** Panel focus before global bindings.
-- **`hom` boundary.** Confirm the RON / `hom` split once `homunc` is in-repo.
+- **Canvas primitives beyond these four** — nine-slice, scrolling containers,
+  and whether `text` needs wrapping and alignment.
+- **`text.from`** — how a canvas addresses a component field in a world it does
+  not contain.
+- **System order within a game.** Component-driven registration says nothing
+  about order, and the generated order is currently alphabetical by file. An
+  `@stage(...)` attribute is the likeliest answer.
+- **Per-object one-off behaviour.** A `Script` component naming a `.hom` with an
+  `on_tick(node, dt)` convention, versus requiring a component per behaviour.
+- **`MessagePort`** between worlds: message types, queue bound, ordering.
+- **`.to_string()` on string literals** in Homun argument position keeps the
+  engine's script API allocating; see `Homun-Lang/report.md`.

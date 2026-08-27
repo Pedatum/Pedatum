@@ -43,7 +43,8 @@ impl Viewport {
         if self.engine.size != (RENDER_WIDTH, RENDER_HEIGHT) {
             self.engine.resize(RENDER_WIDTH, RENDER_HEIGHT);
         }
-        self.engine.load_scene(scene_data);
+        let aspect = RENDER_WIDTH as f32 / RENDER_HEIGHT as f32;
+        self.engine.load_world(scene_data, editor_camera(aspect));
         self.engine.render_current();
         let img = self.engine.frame_image();
         self.image_state = self
@@ -61,25 +62,32 @@ impl Viewport {
         cols: u16,
         rows: u16,
     ) -> Text<'static> {
+        let rows_of_cells = self.world_cells(scene_data, mode, cols, rows);
+        let lines: Vec<Line> = rows_of_cells.into_iter().map(cells_to_line).collect();
+        Text::from(lines)
+    }
+
+    /// The world as cells, for either the viewport or a canvas node.
+    pub fn world_cells(
+        &mut self,
+        scene_data: &scene::Scene,
+        mode: TextArtMode,
+        cols: u16,
+        rows: u16,
+    ) -> Vec<Vec<textart::TextCell>> {
         let (w, h) = (cols as u32 * 2, rows as u32 * 4);
         if w == 0 || h == 0 {
-            return Text::default();
+            return Vec::new();
         }
         if self.engine.size != (w, h) {
             self.engine.resize(w, h);
         }
 
-        // Override the camera aspect with the panel's on-screen aspect so the
-        // scene isn't stretched by the cell grid.
+        // The panel's on-screen aspect, corrected for cells being about twice
+        // as tall as wide, so the world is not stretched by the cell grid.
         let visual_aspect = cols as f32 / (rows as f32 * CELL_ASPECT);
-        let mut sd = scene_data.clone();
-        let cam = sd.camera.get_or_insert_with(default_camera);
-        match &mut cam.projection {
-            scene::Projection::Perspective { aspect, .. } => *aspect = visual_aspect,
-            scene::Projection::Orthographic { aspect, .. } => *aspect = visual_aspect,
-        }
-
-        self.engine.load_scene(&sd);
+        self.engine
+            .load_world(scene_data, editor_camera(visual_aspect));
         self.engine.render_current();
         let packed = self.textart_pass.cells(
             &self.engine.device,
@@ -89,47 +97,85 @@ impl Viewport {
             rows as u32,
             DEFAULT_LINEAR_THRESHOLD,
         );
-        let cells = textart::packed_to_cells(&packed, cols as usize, mode);
-
-        let lines: Vec<Line> = cells
-            .into_iter()
-            .map(|row| {
-                // Merge runs of same-colored cells into single spans.
-                let mut spans: Vec<Span> = Vec::new();
-                let mut run = String::new();
-                let mut run_rgb = [0u8; 3];
-                for cell in row {
-                    if cell.rgb != run_rgb && !run.is_empty() {
-                        spans.push(styled(std::mem::take(&mut run), run_rgb));
-                    }
-                    run_rgb = cell.rgb;
-                    run.push(cell.ch);
-                }
-                if !run.is_empty() {
-                    spans.push(styled(run, run_rgb));
-                }
-                Line::from(spans)
-            })
-            .collect();
-        Text::from(lines)
+        textart::packed_to_cells(&packed, cols as usize, mode)
     }
+}
+
+/// Merge runs of same-coloured cells into single spans.
+fn cells_to_line(row: Vec<textart::TextCell>) -> Line<'static> {
+    let mut spans: Vec<Span> = Vec::new();
+    let mut run = String::new();
+    let mut run_rgb = [0u8; 3];
+    for cell in row {
+        if cell.rgb != run_rgb && !run.is_empty() {
+            spans.push(styled(std::mem::take(&mut run), run_rgb));
+        }
+        run_rgb = cell.rgb;
+        run.push(cell.ch);
+    }
+    if !run.is_empty() {
+        spans.push(styled(run, run_rgb));
+    }
+    Line::from(spans)
 }
 
 fn styled(s: String, [r, g, b]: [u8; 3]) -> Span<'static> {
     Span::styled(s, Style::default().fg(Color::Rgb(r, g, b)))
 }
 
-/// Mirrors the engine's fallback camera (`Engine::load_scene`) for scenes
-/// without an embedded camera, so only the aspect differs between modes.
-fn default_camera() -> scene::Camera {
-    scene::Camera {
-        eye: [3.0, 3.0, 3.0],
-        target: [0.0, 0.0, 0.0],
-        up: [0.0, 1.0, 0.0],
-        projection: scene::Projection::Perspective {
-            fov_y_degrees: 60.0,
-            aspect: 1.0,
-            znear: 0.1,
+/// Render the world into cells, for a canvas node that shows a view of it.
+///
+/// The IDE draws one world per game, so every view name resolves to it. A game
+/// with several worlds needs the view's own target, which is `game.ron`'s job.
+pub struct WorldHost<'a> {
+    pub viewport: &'a mut Viewport,
+    pub world: &'a scene::Scene,
+    pub mode: TextArtMode,
+}
+
+impl crate::tui::canvas::CanvasHost for WorldHost<'_> {
+    fn view(&mut self, _name: &str, w: u16, h: u16) -> Vec<Vec<textart::TextCell>> {
+        self.viewport.world_cells(self.world, self.mode, w, h)
+    }
+
+    fn field(&self, path: &str) -> Option<String> {
+        let (component, field) = path.split_once('.')?;
+        let node = self
+            .world
+            .nodes
+            .iter()
+            .find(|n| n.components.contains_key(component))?;
+        let value = node.components.get(component)?;
+        // The component is opaque here, so read the field out of its RON.
+        let text = ron::to_string(value).ok()?;
+        let after = text.split(&format!("\"{field}\":")).nth(1)?;
+        Some(
+            after
+                .trim_start()
+                .chars()
+                .take_while(|c| !matches!(c, ',' | '}' | ')'))
+                .collect::<String>()
+                .trim()
+                .trim_matches('"')
+                .to_string(),
+        )
+    }
+}
+
+/// Where the editor looks from.
+///
+/// This is not scene data: a world declares no camera, and the IDE's viewport is
+/// not the game's view. Only the aspect differs between the two render modes.
+fn editor_camera(aspect: f32) -> shinra_engine::scene::Camera {
+    use shinra_engine::scene::{Camera, Projection};
+    Camera {
+        eye: glam::Vec3::new(3.0, 3.0, 3.0),
+        target: glam::Vec3::ZERO,
+        up: glam::Vec3::Y,
+        projection: Projection::Perspective {
+            fov_y_radians: 60.0_f32.to_radians(),
+            aspect,
+            znear: 0.01,
             zfar: 100.0,
         },
     }

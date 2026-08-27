@@ -113,9 +113,23 @@ fn build(game_dir: &Path) -> Result<PathBuf> {
     }
     std::fs::write(src.join("runtime.rs"), rt.stdout)?;
 
-    let action_map = lo.game_dir.join("input.tres.ron");
+    // game.ron names the action map; the module compiles it in, because which
+    // key means what is this game's data.
+    let manifest = lo.game_dir.join("game.ron");
+    let text = std::fs::read_to_string(&manifest)
+        .with_context(|| format!("read {}", manifest.display()))?;
+    let game: scene::Game =
+        ron::from_str(&text).with_context(|| format!("parse {}", manifest.display()))?;
+    if game.root().is_none() {
+        bail!(
+            "{} declares no view named `{}`",
+            manifest.display(),
+            scene::ROOT_VIEW
+        );
+    }
+    let action_map = lo.game_dir.join(&game.input);
     if !action_map.exists() {
-        bail!("{} has no input.tres.ron", lo.game_dir.display());
+        bail!("{} names {}, which is missing", manifest.display(), game.input);
     }
     std::fs::copy(&action_map, src.join("input.tres.ron"))?;
 

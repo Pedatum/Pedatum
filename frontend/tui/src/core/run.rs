@@ -101,7 +101,6 @@ mod tests {
     fn run_state() -> RunState {
         RunState::new(Scene {
             name: "t".into(),
-            camera: None,
             nodes: vec![],
         })
     }

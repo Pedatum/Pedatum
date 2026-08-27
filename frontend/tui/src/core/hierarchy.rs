@@ -77,7 +77,6 @@ mod tests {
     fn scene_with_children() -> Scene {
         Scene {
             name: "test".into(),
-            camera: None,
             nodes: vec![
                 Node {
                     name: "parent".into(),

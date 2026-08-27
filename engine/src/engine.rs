@@ -29,6 +29,24 @@ pub struct Engine {
     quad_mesh: Option<Arc<crate::mesh::Mesh>>,
 }
 
+/// The camera a host uses when it has not been given one. A world declares no
+/// camera, so something has to choose, and the choice belongs outside the world.
+pub fn default_camera(aspect: f32) -> crate::scene::Camera {
+    use crate::scene::{Camera, Projection};
+    let _ = aspect;
+    Camera {
+        eye: Vec3::new(3.0, 3.0, 3.0),
+        target: Vec3::ZERO,
+        up: Vec3::Y,
+        projection: Projection::Perspective {
+            fov_y_radians: 60.0_f32.to_radians(),
+            aspect,
+            znear: 0.1,
+            zfar: 100.0,
+        },
+    }
+}
+
 impl Engine {
     /// Build a headless engine (no window/surface) at the given render size.
     pub fn new(width: u32, height: u32) -> Self {
@@ -411,67 +429,22 @@ impl Engine {
         self.readback_buf = None;
     }
 
+    /// Build the runtime scene from a world. The camera comes from the view
+    /// that draws it, never from the world itself.
     pub fn load_scene(&mut self, scene_data: &scene_format::Scene) {
-        use crate::scene::{
-            Camera as EngineCamera, Projection as EngineProjection, Scene as EngineScene,
-        };
+        let (w, h) = self.size;
+        self.load_world(scene_data, default_camera(w as f32 / h as f32));
+    }
 
-        let cam = scene_data
-            .camera
-            .as_ref()
-            .map(|c| {
-                let projection = match &c.projection {
-                    scene_format::Projection::Perspective {
-                        fov_y_degrees,
-                        aspect,
-                        znear,
-                        zfar,
-                    } => EngineProjection::Perspective {
-                        fov_y_radians: fov_y_degrees.to_radians(),
-                        aspect: *aspect,
-                        znear: *znear,
-                        zfar: *zfar,
-                    },
-                    scene_format::Projection::Orthographic {
-                        half_height,
-                        aspect,
-                        znear,
-                        zfar,
-                    } => EngineProjection::Orthographic {
-                        half_height: *half_height,
-                        aspect: *aspect,
-                        znear: *znear,
-                        zfar: *zfar,
-                    },
-                };
-                EngineCamera {
-                    eye: Vec3::from(c.eye),
-                    target: Vec3::from(c.target),
-                    up: Vec3::from(c.up),
-                    projection,
-                }
-            })
-            .unwrap_or_else(|| {
-                let (w, h) = self.size;
-                EngineCamera {
-                    eye: Vec3::new(3.0, 3.0, 3.0),
-                    target: Vec3::ZERO,
-                    up: Vec3::Y,
-                    projection: EngineProjection::Perspective {
-                        fov_y_radians: 60.0_f32.to_radians(),
-                        aspect: w as f32 / h as f32,
-                        znear: 0.1,
-                        zfar: 100.0,
-                    },
-                }
-            });
-
-        let mut sc = EngineScene::new(cam);
-
+    pub fn load_world(
+        &mut self,
+        scene_data: &scene_format::Scene,
+        camera: crate::scene::Camera,
+    ) {
+        let mut sc = crate::scene::Scene::new(camera);
         for node in &scene_data.nodes {
             self.spawn_node(&mut sc, node, Mat4::IDENTITY);
         }
-
         self.current_scene = Some(sc);
     }
 

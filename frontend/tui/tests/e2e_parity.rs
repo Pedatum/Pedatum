@@ -5,10 +5,19 @@ fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }
 
+const GAME_RON: &str = r#"(
+    name: "parity_test",
+    input: "input.tres.ron",
+    views: {
+        "main": ( unit: Ref("canvas.ron"), graphics: View2D, camera: ( projection: Screen ) ),
+        "game": ( unit: Ref("world.ron"), graphics: View3D,
+                  camera: ( projection: Perspective( fov_y_degrees: 60.0, znear: 0.1, zfar: 100.0 ) ) ),
+    },
+)"#;
+
 fn base_scene() -> scene::Scene {
     scene::Scene {
         name: "parity_test".into(),
-        camera: None,
         nodes: vec![scene::Node {
             name: "player".into(),
             transform: scene::Transform {
@@ -31,7 +40,9 @@ fn tui_and_gui_produce_identical_ron() {
     // --- TUI path ---
     let game_dir = dir_tui.path().join("game1");
     std::fs::create_dir(&game_dir).unwrap();
-    base_scene().save(&game_dir.join("scene.ron")).unwrap();
+    // A game folder is one with a game.ron; the world is what the IDE edits.
+    std::fs::write(game_dir.join("game.ron"), GAME_RON).unwrap();
+    base_scene().save(&game_dir.join("world.ron")).unwrap();
 
     let mut app = AppState::new_headless(dir_tui.path()).unwrap();
 
@@ -43,18 +54,18 @@ fn tui_and_gui_produce_identical_ron() {
     app.handle_key(key(KeyCode::Char('+')));
 
     app.save_scene();
-    let tui_ron = std::fs::read_to_string(game_dir.join("scene.ron")).unwrap();
+    let tui_ron = std::fs::read_to_string(game_dir.join("world.ron")).unwrap();
 
     // --- GUI path ---
     let mut gui_scene = base_scene();
     gui_scene.nodes[0].transform.translation[0] += 0.1;
-    let gui_path = dir_gui.path().join("scene.ron");
+    let gui_path = dir_gui.path().join("world.ron");
     gui_scene.save(&gui_path).unwrap();
     let gui_ron = std::fs::read_to_string(&gui_path).unwrap();
 
     // --- Assert parity ---
     assert_eq!(
         tui_ron, gui_ron,
-        "TUI and GUI should produce identical scene.ron"
+        "TUI and GUI should produce identical world.ron"
     );
 }

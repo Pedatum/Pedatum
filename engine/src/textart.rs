@@ -30,6 +30,7 @@ impl TextArtMode {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TextCell {
     pub ch: char,
     /// Average color of the lit subpixels; [0, 0, 0] when none are lit.

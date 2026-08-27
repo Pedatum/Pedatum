@@ -42,8 +42,8 @@ fn missing() -> bool {
 }
 
 fn scene_ron() -> String {
-    std::fs::read_to_string(examples().join("assets/games/game3/scene.ron"))
-        .expect("read game3 scene")
+    std::fs::read_to_string(examples().join("assets/games/game3/world.ron"))
+        .expect("read game3 world")
 }
 
 fn load() -> GameModule {
@@ -205,7 +205,7 @@ fn game4_dialogue_advances_on_the_action_and_stops_at_the_end() {
         return;
     }
     let ron_text =
-        std::fs::read_to_string(examples().join("assets/games/game4/scene.ron")).unwrap();
+        std::fs::read_to_string(examples().join("assets/games/game4/world.ron")).unwrap();
     let game = GameModule::load(&game4_so(), &ron_text).expect("load libgame4.so");
 
     assert_eq!(dialogue_index(&game.scene().unwrap()), 0);
@@ -228,5 +228,162 @@ fn game4_dialogue_advances_on_the_action_and_stops_at_the_end() {
         dialogue_index(&game.scene().unwrap()),
         4,
         "should stop on the last of 5 lines"
+    );
+}
+
+// ── Contacts carry identity, and are recomputed after movement ─────────────
+
+#[derive(serde::Deserialize)]
+struct RunState {
+    crashes: i64,
+    last: String,
+}
+
+fn run_state(scene: &scene::Scene) -> RunState {
+    scene
+        .nodes
+        .iter()
+        .find(|n| n.components.contains_key("Run"))
+        .expect("game3 should carry a Run component")
+        .components
+        .get("Run")
+        .unwrap()
+        .clone()
+        .into_rust::<RunState>()
+        .expect("Run should deserialize")
+}
+
+fn node_x_of(scene: &scene::Scene, name: &str) -> f32 {
+    scene.nodes.iter().find(|n| n.name == name).unwrap().transform.translation[0]
+}
+
+/// The obstacle system names the object it hit, which is only possible because
+/// a contact carries node identity rather than component names.
+#[test]
+fn a_crash_records_which_obstacle_caused_it() {
+    let _s = serial();
+    if missing() { return }
+    let game = load();
+    assert_eq!(run_state(&game.scene().unwrap()).crashes, 0);
+
+    // Trees scroll left at 3.0/s from x = 4.0 and 9.5; the dino sits at -3.0.
+    // Run long enough for the first to reach it.
+    let mut crashed_on = String::new();
+    for _ in 0..400 {
+        game.tick(0.016, &[], &[]).unwrap();
+        let st = run_state(&game.scene().unwrap());
+        if st.crashes > 0 {
+            crashed_on = st.last;
+            break;
+        }
+    }
+    assert!(
+        crashed_on == "tree1" || crashed_on == "tree2",
+        "should name the obstacle it hit, got {crashed_on:?}"
+    );
+}
+
+/// Contacts are computed after the movement systems run, so a response acts on
+/// this tick's positions. If they were stale the run would restart a tick late
+/// and the tree would already have passed through the dino.
+#[test]
+fn a_crash_restarts_the_run_in_the_same_tick() {
+    let _s = serial();
+    if missing() { return }
+    let game = load();
+    let start_x = node_x_of(&game.scene().unwrap(), "tree1");
+
+    for _ in 0..400 {
+        game.tick(0.016, &[], &[]).unwrap();
+        if run_state(&game.scene().unwrap()).crashes > 0 {
+            // restart() put the scene back, so the tree is at its start again.
+            let x = node_x_of(&game.scene().unwrap(), "tree1");
+            assert!(
+                (x - start_x).abs() < 1e-4,
+                "restart should reset positions: {start_x} -> {x}"
+            );
+            return;
+        }
+    }
+    panic!("expected a crash within 400 ticks");
+}
+
+/// Jumping over an obstacle avoids the contact entirely — the collider is the
+/// dino's, and it leaves the ground.
+#[test]
+fn jumping_clears_an_obstacle() {
+    let _s = serial();
+    if missing() { return }
+    let game = load();
+    // Hold the jump action the whole time: the dino re-jumps every landing.
+    for _ in 0..200 {
+        game.tick(0.016, &[keys::SPACE], &[keys::SPACE]).unwrap();
+    }
+    let st = run_state(&game.scene().unwrap());
+    assert!(
+        st.crashes <= 1,
+        "continuous jumping should mostly clear obstacles, got {} crashes",
+        st.crashes
+    );
+}
+
+// ── Hierarchy ──────────────────────────────────────────────────────────────
+
+fn find_child<'a>(scene: &'a scene::Scene, parent: &str, child: &str) -> &'a scene::Node {
+    scene
+        .nodes
+        .iter()
+        .find(|n| n.name == parent)
+        .unwrap_or_else(|| panic!("no node {parent}"))
+        .children
+        .iter()
+        .find(|n| n.name == child)
+        .unwrap_or_else(|| panic!("{parent} has no child {child}"))
+}
+
+/// A child node comes back as a child, not flattened into the root list. The
+/// runtime is flat; the tree is what the host sees.
+#[test]
+fn a_child_node_survives_the_round_trip() {
+    let _s = serial();
+    if missing() { return }
+    let game = load();
+    let scene = game.scene().unwrap();
+    assert!(
+        !scene.nodes.iter().any(|n| n.name == "tree1_top"),
+        "a child must not appear at the root"
+    );
+    let child = find_child(&scene, "tree1", "tree1_top");
+    assert_eq!(child.transform.translation[1], 0.7, "its local transform");
+}
+
+/// Only the parent carries ScrollX, so the child's local transform never
+/// changes while the parent's does — the child rides along.
+#[test]
+fn a_child_rides_its_parent_without_a_system_of_its_own() {
+    let _s = serial();
+    if missing() { return }
+    let game = load();
+    let parent_x0 = node_x_of(&game.scene().unwrap(), "tree1");
+    let child_y0 = find_child(&game.scene().unwrap(), "tree1", "tree1_top")
+        .transform
+        .translation[1];
+
+    for _ in 0..20 {
+        game.tick(0.016, &[], &[]).unwrap();
+    }
+    let scene = game.scene().unwrap();
+    assert!(
+        node_x_of(&scene, "tree1") < parent_x0,
+        "the parent scrolled"
+    );
+    let child = find_child(&scene, "tree1", "tree1_top");
+    assert_eq!(
+        child.transform.translation[1], child_y0,
+        "the child's local transform is untouched"
+    );
+    assert_eq!(
+        child.transform.translation[0], 0.0,
+        "and its local x stays at zero: it moves because its parent did"
     );
 }

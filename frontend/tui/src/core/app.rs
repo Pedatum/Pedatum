@@ -7,7 +7,6 @@ use scene::Scene;
 use super::hierarchy::HierarchyState;
 use super::inspector::InspectorState;
 use super::loader::Loader;
-use super::overlay::OverlayState;
 use super::project::ProjectState;
 use super::run::RunState;
 use crate::config::ViewportMode;
@@ -50,7 +49,6 @@ pub struct AppState {
     pub running: bool,
     pub focused: PanelId,
     pub viewport_mode: ViewportMode,
-    pub overlays: OverlayState,
     /// `Some` while in running (play) mode.
     pub run: Option<RunState>,
     pub loader: Loader,
@@ -78,7 +76,6 @@ impl AppState {
             running: true,
             focused: PanelId::Viewport,
             viewport_mode: ViewportMode::default(),
-            overlays: OverlayState::default(),
             run: None,
             loader,
             hierarchy,
@@ -104,7 +101,6 @@ impl AppState {
             running: true,
             focused: PanelId::Viewport,
             viewport_mode: ViewportMode::default(),
-            overlays: OverlayState::default(),
             run: None,
             loader,
             hierarchy,
@@ -166,7 +162,7 @@ impl AppState {
 
     pub fn save_scene(&self) {
         if let Some(game) = self.loader.current_game() {
-            let path = game.dir.join("scene.ron");
+            let path = game.dir.join("world.ron");
             if let Err(e) = game.scene.save(&path) {
                 eprintln!("[ide] save failed: {e}");
             }

@@ -102,10 +102,19 @@ fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }
 
+const GAME_RON: &str = r#"(
+    name: "test",
+    input: "input.tres.ron",
+    views: {
+        "main": ( unit: Ref("canvas.ron"), graphics: View2D, camera: ( projection: Screen ) ),
+        "game": ( unit: Ref("world.ron"), graphics: View3D,
+                  camera: ( projection: Perspective( fov_y_degrees: 60.0, znear: 0.1, zfar: 100.0 ) ) ),
+    },
+)"#;
+
 fn write_test_scene(dir: &std::path::Path) {
     let scene = scene::Scene {
         name: "test".into(),
-        camera: None,
         nodes: vec![scene::Node {
             name: "player".into(),
             transform: scene::Transform {
@@ -118,7 +127,9 @@ fn write_test_scene(dir: &std::path::Path) {
             ..Default::default()
         }],
     };
-    scene.save(&dir.join("scene.ron")).unwrap();
+    // A game folder is one with a game.ron; world.ron is what the IDE draws.
+    std::fs::write(dir.join("game.ron"), GAME_RON).unwrap();
+    scene.save(&dir.join("world.ron")).unwrap();
 }
 
 fn make_app() -> (AppState, std::path::PathBuf, tempfile::TempDir) {
@@ -170,19 +181,25 @@ fn snapshot_after_adjust_x() {
     check_or_update_txt_snapshot(&snapshot, &baseline);
 }
 
-/// Play mode is scheduling only: entering it must not synthesise any overlay.
-/// Overlays belong to a game, driven through its own systems.
+/// Play mode is scheduling only. Anything drawn over the game picture is a
+/// canvas node the game declared, so entering play mode adds nothing.
 #[test]
-fn play_mode_creates_no_overlay_of_its_own() {
+fn play_mode_draws_nothing_of_its_own() {
     let (mut app, _, _tmp) = make_app();
 
+    let before = render_snapshot(&app);
     app.toggle_run();
     assert!(app.run.is_some());
-    assert!(app.overlays.get("run-messages").is_none());
+    let during = render_snapshot(&app);
+
+    // The status line changes; nothing else the IDE owns appears.
+    for marker in ["Space: next", "End of dialogue", "run-messages"] {
+        assert!(!during.contains(marker), "the IDE drew {marker}");
+        assert!(!before.contains(marker));
+    }
 
     app.handle_key(key(KeyCode::Esc));
     assert!(app.run.is_none());
-    assert!(app.overlays.get("run-messages").is_none());
 }
 
 /// The IDE's status line must not describe gameplay keys — it does not know
@@ -215,7 +232,7 @@ fn game4_scene_carries_an_opaque_component_and_no_dialogue_text() {
         .unwrap()
         .join("shinra-examples/assets/games/game4");
 
-    let scene = scene::Scene::load(&games.join("scene.ron")).unwrap();
+    let scene = scene::Scene::load(&games.join("world.ron")).unwrap();
     assert_eq!(scene.name, "terminal-hearts");
 
     let story = scene
@@ -228,15 +245,15 @@ fn game4_scene_carries_an_opaque_component_and_no_dialogue_text() {
         "the story node draws nothing"
     );
 
-    let raw = std::fs::read_to_string(games.join("scene.ron")).unwrap();
+    let raw = std::fs::read_to_string(games.join("world.ron")).unwrap();
     assert!(
         !raw.contains("speaker:"),
-        "dialogue text must not live in scene.ron"
+        "dialogue text must not live in world.ron"
     );
     assert!(games.join("story.tres.ron").exists(), "story resource missing");
 }
 
-// -- Persistence test (still needs the scene.ron roundtrip assertion) --
+// -- Persistence test --
 
 #[test]
 fn adjust_and_save_persists_to_disk() {
@@ -249,7 +266,7 @@ fn adjust_and_save_persists_to_disk() {
     app.handle_key(key(KeyCode::Char('+')));
     app.save_scene();
 
-    let loaded = scene::Scene::load(&game_dir.join("scene.ron")).unwrap();
+    let loaded = scene::Scene::load(&game_dir.join("world.ron")).unwrap();
     let x = loaded.nodes[0].transform.translation[0];
     assert!(
         (x - 0.1).abs() < 1e-6,
