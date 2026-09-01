@@ -1,3 +1,12 @@
+//! The viewport panel: a view's world, drawn into the terminal.
+//!
+//! A view declares which projection it looks through, and that choice has to
+//! survive all the way to `shader.wgsl`. It does so as one matrix:
+//!
+//! ```text
+//! ViewDef.camera ──> view::runtime_camera ──> Camera::view_proj ──> P * V * M
+//! ```
+
 use image::DynamicImage;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span, Text};
@@ -6,6 +15,7 @@ use ratatui_image::protocol::StatefulProtocol;
 use shinra_engine::engine::Engine;
 use shinra_engine::textart::{self, TextArtMode};
 use shinra_engine::textart_gpu::{TextArtGpu, DEFAULT_LINEAR_THRESHOLD};
+use shinra_engine::view::{runtime_camera, Surface};
 
 const RENDER_WIDTH: u32 = 256;
 const RENDER_HEIGHT: u32 = 192;
@@ -14,10 +24,21 @@ const RENDER_HEIGHT: u32 = 192;
 /// camera aspect so geometry keeps its proportions in cell space.
 const CELL_ASPECT: f32 = 2.0;
 
+/// What the engine currently holds. Loading a world spawns an entity per mesh
+/// and per sprite, so it happens when something actually changed, not per frame.
+#[derive(Clone, Copy, PartialEq)]
+struct Loaded {
+    /// The scene's revision, bumped by whoever mutates it.
+    rev: u64,
+    camera: shinra_engine::scene::Camera,
+    size: (u32, u32),
+}
+
 pub struct Viewport {
     engine: Engine,
     textart_pass: TextArtGpu,
     picker: Picker,
+    loaded: Option<Loaded>,
     pub image_state: StatefulProtocol,
 }
 
@@ -34,17 +55,46 @@ impl Viewport {
             engine,
             textart_pass,
             picker,
+            loaded: None,
             image_state,
         }
     }
 
-    /// Image-protocol path (kitty/sixel/halfblocks via ratatui-image).
-    pub fn render_scene(&mut self, scene_data: &scene::Scene) {
-        if self.engine.size != (RENDER_WIDTH, RENDER_HEIGHT) {
-            self.engine.resize(RENDER_WIDTH, RENDER_HEIGHT);
+    /// Resize if needed, then load the world only if this frame differs from
+    /// the last one that was loaded.
+    fn prepare(
+        &mut self,
+        world: &scene::Scene,
+        camera: &scene::Camera,
+        rev: u64,
+        size: (u32, u32),
+        surface: Surface,
+    ) {
+        if self.engine.size != size {
+            self.engine.resize(size.0, size.1);
         }
-        let aspect = RENDER_WIDTH as f32 / RENDER_HEIGHT as f32;
-        self.engine.load_world(scene_data, editor_camera(aspect));
+        let want = Loaded {
+            rev,
+            camera: runtime_camera(camera, world, surface),
+            size,
+        };
+        if self.loaded == Some(want) {
+            return;
+        }
+        self.engine.load_world(world, want.camera);
+        self.loaded = Some(want);
+    }
+
+    /// Image-protocol path (kitty/sixel/halfblocks via ratatui-image).
+    pub fn render_scene(&mut self, world: &scene::Scene, camera: &scene::Camera, rev: u64) {
+        let size = (RENDER_WIDTH, RENDER_HEIGHT);
+        self.prepare(
+            world,
+            camera,
+            rev,
+            size,
+            Surface::pixels(RENDER_WIDTH, RENDER_HEIGHT),
+        );
         self.engine.render_current();
         let img = self.engine.frame_image();
         self.image_state = self
@@ -57,12 +107,14 @@ impl Viewport {
     /// readback ints to colored glyphs on the CPU.
     pub fn render_text(
         &mut self,
-        scene_data: &scene::Scene,
+        world: &scene::Scene,
+        camera: &scene::Camera,
+        rev: u64,
         mode: TextArtMode,
         cols: u16,
         rows: u16,
     ) -> Text<'static> {
-        let rows_of_cells = self.world_cells(scene_data, mode, cols, rows);
+        let rows_of_cells = self.world_cells(world, camera, rev, mode, cols, rows);
         let lines: Vec<Line> = rows_of_cells.into_iter().map(cells_to_line).collect();
         Text::from(lines)
     }
@@ -70,24 +122,21 @@ impl Viewport {
     /// The world as cells, for either the viewport or a canvas node.
     pub fn world_cells(
         &mut self,
-        scene_data: &scene::Scene,
+        world: &scene::Scene,
+        camera: &scene::Camera,
+        rev: u64,
         mode: TextArtMode,
         cols: u16,
         rows: u16,
     ) -> Vec<Vec<textart::TextCell>> {
-        let (w, h) = (cols as u32 * 2, rows as u32 * 4);
-        if w == 0 || h == 0 {
+        let size = (cols as u32 * 2, rows as u32 * 4);
+        if size.0 == 0 || size.1 == 0 {
             return Vec::new();
         }
-        if self.engine.size != (w, h) {
-            self.engine.resize(w, h);
-        }
-
         // The panel's on-screen aspect, corrected for cells being about twice
         // as tall as wide, so the world is not stretched by the cell grid.
-        let visual_aspect = cols as f32 / (rows as f32 * CELL_ASPECT);
-        self.engine
-            .load_world(scene_data, editor_camera(visual_aspect));
+        let surface = Surface::cells(cols as u32, rows as u32, CELL_ASPECT);
+        self.prepare(world, camera, rev, size, surface);
         self.engine.render_current();
         let packed = self.textart_pass.cells(
             &self.engine.device,
@@ -123,19 +172,29 @@ fn styled(s: String, [r, g, b]: [u8; 3]) -> Span<'static> {
     Span::styled(s, Style::default().fg(Color::Rgb(r, g, b)))
 }
 
-/// Render the world into cells, for a canvas node that shows a view of it.
+/// Draws the views a canvas samples. `Sprite(source: View("game"))` resolves
+/// here, through the camera that view declared.
 ///
 /// The IDE draws one world per game, so every view name resolves to it. A game
 /// with several worlds needs the view's own target, which is `game.ron`'s job.
 pub struct WorldHost<'a> {
     pub viewport: &'a mut Viewport,
+    pub game: &'a scene::Game,
     pub world: &'a scene::Scene,
+    pub rev: u64,
     pub mode: TextArtMode,
 }
 
 impl crate::tui::canvas::CanvasHost for WorldHost<'_> {
-    fn view(&mut self, _name: &str, w: u16, h: u16) -> Vec<Vec<textart::TextCell>> {
-        self.viewport.world_cells(self.world, self.mode, w, h)
+    fn view(&mut self, name: &str, w: u16, h: u16) -> Vec<Vec<textart::TextCell>> {
+        // A canvas naming a view that does not exist would otherwise draw the
+        // world through whatever camera happened to be loaded last.
+        let Some(view) = self.game.views.get(name) else {
+            eprintln!("[ide] canvas names view `{name}`, which game.ron does not declare");
+            return Vec::new();
+        };
+        self.viewport
+            .world_cells(self.world, &view.camera, self.rev, self.mode, w, h)
     }
 
     fn field(&self, path: &str) -> Option<String> {
@@ -162,21 +221,18 @@ impl crate::tui::canvas::CanvasHost for WorldHost<'_> {
     }
 }
 
-/// Where the editor looks from.
-///
-/// This is not scene data: a world declares no camera, and the IDE's viewport is
-/// not the game's view. Only the aspect differs between the two render modes.
-fn editor_camera(aspect: f32) -> shinra_engine::scene::Camera {
-    use shinra_engine::scene::{Camera, Projection};
-    Camera {
-        eye: glam::Vec3::new(3.0, 3.0, 3.0),
-        target: glam::Vec3::ZERO,
-        up: glam::Vec3::Y,
-        projection: Projection::Perspective {
-            fov_y_radians: 60.0_f32.to_radians(),
-            aspect,
+/// Where the editor looks from when there is no game to ask — an ad-hoc
+/// `world.ron` with no `game.ron` beside it.
+pub fn editor_camera() -> scene::Camera {
+    scene::Camera {
+        projection: scene::Projection::Perspective {
+            fov_y_degrees: 60.0,
             znear: 0.01,
             zfar: 100.0,
+            eye: [3.0, 3.0, 3.0],
+            target: [0.0, 0.0, 0.0],
+            up: [0.0, 1.0, 0.0],
         },
+        anchor: None,
     }
 }

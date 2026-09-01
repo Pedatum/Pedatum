@@ -1,0 +1,11 @@
+[package]
+name = "se-tui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+se-abi.workspace = true
+anyhow.workspace = true
+crossterm.workspace = true
+ratatui.workspace = true
+libc.workspace = true

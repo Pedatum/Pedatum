@@ -6,7 +6,7 @@
 
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span, Text};
-use scene::{Canvas, CanvasNode, Rect, RectAnchor, TexSource};
+use scene::{Canvas, CanvasNode, Rect, TexSource};
 use shinra_engine::textart::TextCell;
 
 /// A rectangle in cells, resolved from a layout rule.
@@ -199,6 +199,7 @@ fn draw(node: &CanvasNode, host: &mut impl CanvasHost, buf: &mut CellBuf, parent
 #[cfg(test)]
 mod tests {
     use super::*;
+    use scene::RectAnchor;
     use scene::{CanvasSprite, ColorRect, Text as CanvasText};
 
     fn rect(anchor: RectAnchor, size: Option<[u32; 2]>, offset: [i32; 2]) -> Rect {

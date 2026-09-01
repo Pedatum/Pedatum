@@ -1,0 +1,16 @@
+[package]
+name = "se-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "shinra"
+path = "src/main.rs"
+
+[dependencies]
+se-abi.workspace = true
+se-host.workspace = true
+se-render.workspace = true
+se-tui.workspace = true
+ratatui.workspace = true
+anyhow.workspace = true

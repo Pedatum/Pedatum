@@ -1,0 +1,9 @@
+[package]
+name = "se-host"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+se-abi.workspace = true
+anyhow.workspace = true
+libloading.workspace = true

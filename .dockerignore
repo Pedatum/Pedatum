@@ -1,10 +1,4 @@
 target/
-.tmp/
-/.browser/
 .git/
-.claude/
-vscode-ext/node_modules/
-vscode-ext/out/
-*.swp
-*.swo
-.DS_Store
+.tmp/
+frontend/gui/node_modules/

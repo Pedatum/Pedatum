@@ -1,4 +1,35 @@
 [workspace]
 resolver = "2"
-members = ["engine", "abi", "scene", "frontend/tui", "cli"]
-# "frontend/gui/src-tauri" excluded — requires `npm install` + `cargo fetch` with network access
+members = [
+    "crates/se-abi",
+    "crates/se-macro",
+    "crates/se",
+    "crates/se-host",
+    "crates/se-render",
+    "crates/se-tui",
+    "crates/se-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
+se-abi   = { path = "crates/se-abi" }
+se-macro = { path = "crates/se-macro" }
+se       = { path = "crates/se" }
+se-host  = { path = "crates/se-host" }
+se-render = { path = "crates/se-render" }
+se-tui   = { path = "crates/se-tui" }
+
+anyhow     = "1"
+libloading = "0.8"
+wgpu       = "27"
+pollster   = "0.3"
+bytemuck   = { version = "1", features = ["derive"] }
+crossterm  = "0.29"
+ratatui    = "0.29"
+libc       = "0.2"
+proc-macro2 = "1"
+quote      = "1"
+syn        = { version = "2", features = ["full"] }

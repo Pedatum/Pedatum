@@ -1,298 +1,179 @@
-# shinra-engine
+# Shinra Engine
 
-The Rust + wgpu game engine plus its tooling: render core (`engine`), serde
-scene format (`scene`), cdylib FFI types (`abi`), and two ways to run games —
-`runner` (terminal player for cdylib games) and the `frontend/` IDEs
-(`tui` ratatui IDE, `gui` Tauri + Svelte scaffold).
+A game engine where every part of a game is a `.so` that can be replaced while
+the game is running.
 
-Game **data** lives in a separate sibling project (e.g.
-[`shinra-examples`](../shinra-examples/)) — a folder per game under
-`assets/games/<name>/` holding `scene.ron`. The TUI IDE loads scene files,
-renders in-terminal, and **`n`** in the IDE cycles to the next game.
-
-## Two coexisting game models
-
-This repo currently supports two ways of describing a game; they're being
-unified, not maintained in parallel forever.
-
-| Model | Lives in | Loader | Status |
-|---|---|---|---|
-| **scene-based** (data) | `<project>/assets/games/<name>/scene.ron` | `frontend/tui` (working), `frontend/gui` (scaffold) | Current direction. |
-| **cdylib** (code) | `target/debug/libgame*.so`, built from a Rust crate via the `.hom` DSL → `homunc` → rustc | `runner` | Legacy. The build infra (`hom_hecs` runtime, `homunc` integration, build.rs templates) still needs to be relocated into this repo; see "Roadmap". |
-
-A scene-based game is a single `scene.ron` (a `scene::Scene`): nodes with
-transforms, optional `mesh:` OBJ refs (`assets/obj/...`), optional `sprite:`
-(a quad UV-cut from a sheet PNG: `sheet`, `grid`, `cell`, `size`), optional
-`tilemap:` (+ `.tres.ron` tileset), behavior `components:`
-(`PlayerControlled`, `ScrollX`, `Obstacle` — interpreted by the IDE's
-running mode, plus `Dialogue` for Space-advanced visual-novel text), and an
-optional embedded `camera:` — the engine falls back to
-a default perspective camera when it's absent.
-
-We call the architecture **gametok**: TikTok-style swipe between games. `n`
-is consumed by the loader, never seen by the game.
-
-## Prerequisites (Ubuntu / Debian, only if building natively)
-
-```bash
-# Rust toolchain — current stable (1.88+ required by wgpu 27)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
-. "$HOME/.cargo/env"
-
-# C/C++ toolchain
-sudo apt install -y build-essential cmake nasm pkg-config
-
-# Vulkan runtime for headless wgpu rendering (TUI IDE, tests)
-sudo apt install -y mesa-vulkan-drivers libvulkan1 vulkan-tools
-```
-
-## Run natively
-
-```bash
-cargo build                        # builds engine, scene, abi, runner, tui
-cargo run -p tui                   # TUI IDE (ratatui, runs in terminal)
-cargo run -p runner                # terminal mode; cycles libgame*.so in target/debug
-```
-
-Run from inside a game project directory (e.g. `shinra-examples/`) so the IDE
-can find `assets/games/`.
-
-## TUI IDE
-
-The TUI IDE (`frontend/tui` crate, binary `tui`) is a single Rust binary that
-replaces the former editor-server + VS Code extension stack. One process, one
-language, zero network. Works over SSH, in tmux, headless.
-
-```bash
-cd ../shinra-examples              # or any game project with assets/games/
-cargo run -p tui --manifest-path ../shinra-engine/Cargo.toml
-```
-
-### Layout
+The specification is [`design.md`](design.md). This file describes what is
+built.
 
 ```
-+-----------------------------------------------------------------------+
-|  File  Edit  View  Run                              game 1/2: bunny   |
-+-----------------------+-------------------------------+---------------+
-| Hierarchy             | Viewport                      | Inspector     |
-|                       |                               |               |
-| > Main Camera         |     [ Player ]                | Name: Player  |
-| > Player              |                               | Position:     |
-|                       |         [ Enemy ]             |   X: 10.0     |
-|                       |                               |   Y: 5.0      |
-+-----------------------+-------------------------------+---------------+
-| Project Browser       | Terminal                                      |
-| assets/               | $ bash (embedded PTY)                         |
-+-----------------------+-----------------------------------------------+
+             bundle.so
+         data.rs + buffer.rs
+        ↙        ↓       ↘
+   data ──►  game.so ──┬──►  process.so ────►  data
+  status     control   │         ecs          update
+                ↓      │
+            asset.so ──┴──►  render.so ───►  buffer ──►  show
+            appearance         graphs        targets
+
+  └──── imperative ────┘└───── pure ───────┘
 ```
 
-Five panels: Hierarchy (scene tree), Viewport (wgpu render), Inspector
-(selected node transform), Project Browser (file tree), and Terminal — a real
-embedded bash shell (portable-pty + vt100). Clicking a panel with the mouse
-focuses it.
+Change `render.so` and the game looks different. Change `asset.so` and it is
+about something else. Change `game.so` and the rules change. The world — every
+entity, every component — survives all three, because the host owns it and the
+modules only describe it.
 
-### Viewport render modes
+Change `bundle.so` and you have a different game set, so everything reloads.
+That is the one line you cannot cross without starting over, which is what
+makes the other three cheap.
 
-The viewport renders the wgpu frame as Unicode text-art by default, so the
-scene reads like text instead of solid color blocks. `m` cycles the mode:
+## A game is a directory
 
-| Mode | Glyphs |
-|---|---|
-| `Mixed` (default) | dim cells as braille dots `⣸⣿⣆`, bright cells as quadrant blocks `▛█▜` — ink density doubles as shading |
-| `Quadrant` | 2×2 block glyphs ` ▘▝▀▖▌▞▛▗▚▐▜▄▙▟█` (16 patterns) |
-| `Braille` | 2×4 dot glyphs U+2800–U+28FF (256 patterns, 8× cell resolution) |
-| `Image` | ratatui-image protocol (kitty / sixel / halfblock fallback) |
+There is no manifest. The tree is the configuration, because a manifest could
+disagree with the tree.
 
-Text modes run on the GPU: a compute pass (`engine/src/textart.wgsl`,
-wrapped by `engine/src/textart_gpu.rs`) renders at 2×4 subpixels per cell,
-thresholds each subpixel by linear luminance, and packs one
-`u32` per cell (`braille bits << 24 | sRGB r/g/b`). The CPU readback is one
-int per cell, decoded to glyphs by `textart::packed_to_cells` (a CPU
-reference implementation of the pass lives in `engine/src/textart.rs` for
-tests). The camera aspect is corrected for ~1:2 terminal cells so geometry
-keeps its proportions.
-
-### Default keybindings
-
-Configurable bindings (`ide.ron`):
-
-| Key     | Action               |
-|---------|----------------------|
-| Ctrl+H  | focus Hierarchy      |
-| Ctrl+V  | focus Viewport       |
-| Ctrl+I  | focus Inspector      |
-| Ctrl+F  | focus Project browser|
-| Ctrl+T  | focus Terminal       |
-| m       | cycle viewport render mode |
-| r       | toggle running (play) mode |
-| q       | quit                 |
-
-Built-in keys (not configurable):
-
-| Key     | Action                                        |
-|---------|-----------------------------------------------|
-| n       | cycle to next game                            |
-| Tab     | cycle focused panel                           |
-| Ctrl+S  | save current game's `scene.ron` back to disk  |
-| Esc     | quit (unless editing in the Inspector)        |
-
-Per-panel keys: Hierarchy / Project use ↑/↓ to move and Enter to
-expand/collapse; in the Inspector, `e` enters edit mode, then Tab cycles
-fields, `+`/`-` adjust the value by 0.1 (applied to the scene live), and Esc
-exits edit mode.
-
-### Running mode
-
-`r` plays the current game on a cloned scene, like the real game runner —
-the editor scene is untouched. While running:
-
-| Key   | Action                                  |
-|-------|-----------------------------------------|
-| space | next dialogue line, or jump in action games |
-| n     | swipe to the next game (restarts the run) |
-| esc / r | stop and return to the editor         |
-
-Behavior comes from `components:` in `scene.ron`, ticked each frame with
-real dt (`frontend/tui/src/core/run.rs`): `PlayerControlled` gets gravity +
-the space jump impulse; `ScrollX(speed, wrap_at, reset_to)` auto-scrolls a
-node along X with wrap-around; colliding with an `Obstacle` node resets the
-run. See `shinra-examples/assets/games/game3` — a Chrome-offline-style dino
-run built from the `assets/images/2x2_grid.png` sprite sheet (dino / tree /
-cloud / bird).
-
-`Dialogue(lines: [...])` turns the same overlay system into a simple galgame
-text box: each line has a `speaker` and `text`, and Space advances to the next
-line. See `shinra-examples/assets/games/game4` for a complete example.
-
-Game4 uses the reusable text-box overlay system
-(`frontend/tui/src/core/overlay.rs` + `tui/overlay.rs`). The dialogue overlay
-is only created for scenes containing `Dialogue`; games 1–3 do not show it.
-
-Note: configurable bindings are resolved first, even while the Terminal panel
-is focused — with the default config you cannot type `q` into the embedded
-shell. Stderr (Mesa/EGL driver noise) is redirected to
-`/tmp/shinra-ide-stderr.log`.
-
-### Configuration
-
-Keybindings are configurable via `ide.ron` in the working directory:
-
-```ron
-(
-    mode: Tui,
-    keybindings: {
-        "ctrl+h": "focus_hierarchy",
-        "ctrl+v": "focus_viewport",
-        "ctrl+i": "focus_inspector",
-        "ctrl+f": "focus_project",
-        "ctrl+t": "focus_terminal",
-        "m": "toggle_viewport_mode",
-        "r": "toggle_run",
-        "q": "quit",
-    },
-    viewport_mode: Mixed,   // Mixed | Quadrant | Braille | Image
-)
-```
-
-`mode: Gui` is accepted but currently a no-op (the binary exits immediately).
-
-## GUI (Tauri + Svelte scaffold)
-
-`frontend/gui` is a Svelte 5 + Vite mirror of the TUI's panel layout
-(Hierarchy, Project, Viewport, Inspector, Terminal, Console) intended to
-become a native Tauri 2 app. Today it's a browser-only scaffold with mock
-state — no engine render in the viewport yet. The `src-tauri` crate (with
-`load_scene` / `save_scene` commands) is **excluded from the workspace**
-(needs `npm install` + network) and does not currently compile.
-
-```bash
-cd frontend/gui
-npm install
-npm run dev                        # vite dev server on :1420
-# or, containerized:
-docker compose up gui              # from the repo root
-```
-
-## Workspace layout
+**A `.rs` at depth 1 is a module. Anything deeper is a source file inside one.**
 
 ```
-shinra-engine/
-├── engine/             shinra-engine — wgpu device, mesh + sprite render
-│                       pipelines, scene loading, readback/snapshot, text-art
-│                       compute pass, presenters, Keymap, EngineBackend trait
-├── abi/                gametok-abi — #[repr(C)] InputFrame, Drawable (cdylib FFI)
-├── scene/              serde scene format (scene.ron: nodes, tilemaps, camera)
-├── runner/             terminal binary; dlopen + render loop + n-swipe
-├── frontend/
-│   ├── tui/            TUI IDE — ratatui 5-panel layout, wgpu offscreen render,
-│   │                   embedded PTY terminal (bin name: tui)
-│   ├── gui/            Tauri 2 + Svelte 5 IDE scaffold + Playwright e2e
-│   └── tests/snapshots/  shared TUI/GUI snapshot baselines
-├── docker-compose.yml  gui dev server, e2e + rust-test profiles
-├── Dockerfile          dev image (used by the rust-test service; its default
-│                       CMD still targets the removed editor-server)
-└── Dockerfile.release  slim multi-stage image (same stale editor-server CMD)
+game1/
+├── bundle/  data.rs  buffer.rs          both required
+├── process/ orbit.rs  spin.rs  breathe.rs
+├── render/  solid.rs  ghost.rs  solid/shade.rs  wgsl/mod.rs
+├── asset/   bunny.rs  teapot.rs  bunny/model.obj
+└── game/    game1.rs  showcase.rs
 ```
 
-## The gametok cdylib FFI (legacy)
+A folder named after a sibling `.rs` is private to it — `render/solid/` belongs
+to `solid.rs` alone. One without a sibling is shared across the category —
+`render/wgsl/`, reached as `crate::render::wgsl`.
 
-A cdylib game must export five C symbols. The runner dlopens it, calls
-`tick(dt, input)` per frame, and reads `drawables_ptr` / `drawables_len`.
+Each module is one `rustc` invocation. No `Cargo.toml`, no build script.
+
+## Six entry points
+
+| Module | Symbol | Registers |
+|---|---|---|
+| `bundle.so` | `se_register_layouts()` | name → layout (from `data.rs`) |
+| | `se_register_buffers()` | name → shape, count, sampled (from `buffer.rs`) |
+| `asset/*.so` | `se_register_assets()` | name → bytes |
+| `process/*.so` | `se_register_stages()` | spec + function |
+| `render/*.so` | `se_register_graph()` | nodes + edges |
+| `game/*.so` | `se_register_control()` | slots + tick |
+
+Every module also exports `se_abi_version`, checked before anything else in
+the image is trusted.
+
+## Writing one
 
 ```rust
-extern "C" fn meshes_count() -> u32;
-extern "C" fn meshes_path(i: u32, out: *mut u8, cap: u32) -> u32;
-extern "C" fn tick(dt: f32, input: *const InputFrame);
-extern "C" fn drawables_ptr() -> *const Drawable;
-extern "C" fn drawables_len() -> u32;
+// bundle/data.rs
+#[repr(C)]
+#[derive(Clone, Copy, se::Schema)]
+pub struct Transform { pub pos: [f32; 3], pub rot: [f32; 4], pub scale: [f32; 3] }
+
+se::layouts!(Transform);
 ```
 
-`Drawable { mesh_id, _pad, model: [f32; 16] }` — column-major mat4. The
-runner copies into a transient `Scene`, calls `engine.render(&scene)`, and
-presents via the terminal presenter (viuer). Input: `w/a/s/d` move, arrows
-rotate, `j/k` scale, `n` next game, `q`/Esc quit.
+```rust
+// process/orbit.rs — the parameter list IS the query
+use data::{Orbit, Transform};
 
-The `.hom` DSL → `homunc` → rustc cdylib pipeline that produced these
-formerly shipped in `shinra-examples/games/`. The build infrastructure
-(templates, `hom_hecs` runtime, `homunc` invocation) still needs to be
-relocated into this repo; see "Roadmap".
+#[se::stage]
+fn orbit(t: &mut Transform, o: &mut Orbit, dt: f32) { /* ... */ }
 
-## Tests
+se::stages!(orbit);
+```
+
+Reaching outside the signature is not expressible. There is no world handle, no
+command buffer, no escape hatch — so "who wrote this component?" is answered by
+reading one file.
+
+```rust
+// render/solid.rs — pure: data + assets in, buffers out
+se::graph!("solid", |g| g.present("scene").pass("bodies", |p| p
+    .shader(format!("{}{}", wgsl::MESH_VS, shade::FS))
+    .color(&["scene"]).depth("depth")
+    .uniform_of("Camera")
+    .instanced("Transform", "model.obj")));
+```
+
+`SeInstance` and `SeUniform` are generated from the component layouts, so
+adding a field to `data.rs` makes it appear in the shader. `model.obj` names an
+asset, not a file: whichever `asset/*.so` fills the asset slot answers.
+
+## Crates
+
+| Crate | Role |
+|---|---|
+| `se-abi` | every `#[repr(C)]` type that crosses a boundary. No deps, no alloc |
+| `se-macro` | `derive(Schema)`, `#[se::stage]`, `stages!` |
+| `se` | what a module compiles against: the entry macros and `GraphBuilder` |
+| `se-host` | loader, world (sparse sets), scheduler, `Ctl` vtable, bundle |
+| `se-render` | wgpu graph executor, OBJ meshes, layout → shader attributes |
+| `se-tui` | half-block presenter and the IDE panel |
+| `se-cli` | the `shinra` binary |
+
+The engine provides general tools. It has no camera, no sprite, no dialogue and
+no physics — those are things games have, and games live in
+[`shinra-examples`](../shinra-examples).
+
+## Using it
 
 ```bash
-cargo test --workspace             # unit + integration tests, all crates
-ls target/debug/smoke/             # cube.png teapot.png bunny.png — render smoke outputs
+cargo build
+export SHINRA_ENGINE=$PWD
+
+target/debug/shinra build ../shinra-examples/game1
+target/debug/shinra run   ../shinra-examples/game1          # TUI
+target/debug/shinra shot  ../shinra-examples/game1 -n 3 --size 160x90 > f.ppm
 ```
 
-- `engine/tests/render_smoke.rs` — renders cube/teapot/bunny to PNG (skips
-  meshes whose assets are missing).
-- `engine/tests/snapshot_test.rs` + `frontend/tui/tests/` — PNG and TUI-text
-  snapshot baselines under `frontend/tests/snapshots/`; refresh with
-  `UPDATE_SNAPSHOTS=1 cargo test`.
-- `engine/tests/frontend_parity_test.rs` — proves TUI and GUI share one
-  deterministic `EngineBackend` code path.
-- GUI e2e: `cd frontend/gui && npm test` (Playwright against the vite dev
-  server), or containerized: `docker compose --profile test up e2e`.
-- Workspace tests in Docker: `docker compose --profile test run rust-test`.
+`run` gives you the IDE: the presented buffer as truecolour half-blocks, and
+beside it the passes in execution order, the loaded modules, and a log. Every
+render pipeline gets a TUI, because the terminal is a presenter like any other.
 
-## Roadmap
+`esc` quits · `ctrl-r` reloads · `shift-←/→` swipes to another game.
 
-1. **Runner reads scene-based games.** Today `runner` only knows about
-   `target/debug/libgame*.so`. Teach it to also (or instead) cycle
-   `assets/games/*/scene.ron` so the IDE and runner share one game model.
-2. **Move cdylib build infra into this repo.** `homunc`, `hom_hecs/`, and
-   the per-game `build.rs` template currently expect to live next to game
-   source. Lift them into this repo and let the IDE "scaffold game" command
-   stamp out a new game folder against this repo's templates.
-3. **Finish the GUI.** Wire the Svelte scaffold to the engine (viewport
-   render, real scene load/save through the Tauri commands) and bring
-   `src-tauri` back into the workspace.
+### No GPU?
 
-## Status
+wgpu will pick a software adapter. On Debian/Ubuntu:
 
-POC complete: the TUI IDE loads scene-based games (meshes, sprites,
-tilemaps), renders them in-terminal as Unicode text-art, edits node
-transforms through the Inspector, saves back to `scene.ron` with Ctrl+S, and
-plays them in running mode (`r`) — game3 is a playable dino-run mini game.
-The GUI is a tested (Playwright) but engine-less scaffold. The native runner
-still loads cdylib `.so` files only.
+```bash
+apt-get install -y mesa-vulkan-drivers libvulkan1
+```
+
+This is a supported configuration, not a fallback — the engine is headless by
+design and never opens a window. `docker compose up` builds an image with it
+already installed.
+
+### When a pass misbehaves
+
+```bash
+SE_DUMP_WGSL=/tmp/wgsl target/debug/shinra shot <bundle> -n 1
+```
+
+writes each pass's fully composed shader, prelude included.
+
+## Notes from building it
+
+- **`dlopen` caches by path.** Reloading the same path silently returns the old
+  code, so every load goes through a fresh shadow copy.
+- **Nothing outlives its image.** The host deep-copies every string and byte at
+  registration, so only function pointers still point into a module — which is
+  why a module and the specs taken from it are dropped together.
+- **A `.so` loses its statics when it is swapped.** State that must survive is a
+  component. The examples follow this rule and so should you.
+- **Uniform fields arrive as `vec4`.** WGSL aligns `vec3` to 16 bytes and
+  `#[repr(C)]` aligns it to 4, so the host repacks rather than let the two
+  quietly disagree. Read `u.eye.xyz`, `u.fov.x`.
+- **A sampled buffer always reads the previous frame.** That is what keeps the
+  graph acyclic: a mirror showing a mirror is a one-frame delay, not a cycle.
+  It also means a multi-pass chain is one frame behind per hop.
+- **Meshes are normalized to a unit box.** Otherwise swapping `bunny.so` for
+  `teapot.so` would change the size of the world, and the two would not really
+  be interchangeable. Scale belongs to `Transform`.
+
+## Licence
+
+See [LICENSE](LICENSE).

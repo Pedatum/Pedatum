@@ -27,7 +27,7 @@ fn key_code(code: KeyCode) -> Option<u32> {
     use gametok_abi::keys;
     Some(match code {
         KeyCode::Char(' ') => keys::SPACE,
-        KeyCode::Char(c) => (c.to_ascii_lowercase() as u32),
+        KeyCode::Char(c) => c.to_ascii_lowercase() as u32,
         KeyCode::Left => keys::LEFT,
         KeyCode::Right => keys::RIGHT,
         KeyCode::Up => keys::UP,
@@ -57,6 +57,10 @@ pub struct AppState {
     pub inspector: InspectorState,
     pub project: ProjectState,
     pub terminal: Option<EmbeddedTerminal>,
+    /// Bumped whenever the scene the viewport draws changes. Loading a world
+    /// respawns every mesh, so the viewport reloads on this rather than per
+    /// frame.
+    scene_rev: u64,
 }
 
 impl AppState {
@@ -83,6 +87,7 @@ impl AppState {
             inspector,
             project,
             terminal: Some(terminal),
+            scene_rev: 0,
         })
     }
 
@@ -108,6 +113,7 @@ impl AppState {
             inspector,
             project,
             terminal: None,
+            scene_rev: 0,
         })
     }
 
@@ -124,6 +130,25 @@ impl AppState {
             .or_else(|| self.current_scene())
     }
 
+    /// Which revision `display_scene` is at.
+    pub fn scene_rev(&self) -> u64 {
+        self.scene_rev
+    }
+
+    fn touch_scene(&mut self) {
+        self.scene_rev = self.scene_rev.wrapping_add(1);
+    }
+
+    /// The view the viewport panel draws through, and the canvas it composites
+    /// into. A game rooted on a world has no canvas: nothing to composite.
+    pub fn display_camera(&self) -> scene::Camera {
+        self.loader
+            .current_game()
+            .and_then(|g| g.root_view())
+            .map(|v| v.camera.clone())
+            .unwrap_or_else(crate::tui::viewport::editor_camera)
+    }
+
     /// Enter / leave running (play) mode. A game with a built module is driven
     /// by it; one without just ticks a clock.
     pub fn toggle_run(&mut self) {
@@ -133,6 +158,7 @@ impl AppState {
                 self.focused = PanelId::Viewport;
             }
         }
+        self.touch_scene();
     }
 
     fn start_run(&self) -> Option<RunState> {
@@ -147,6 +173,7 @@ impl AppState {
     pub fn tick(&mut self, dt: f32) {
         if let Some(run) = &mut self.run {
             run.tick(dt);
+            self.touch_scene();
         }
     }
 
@@ -158,6 +185,7 @@ impl AppState {
             .unwrap_or_else(|| HierarchyState::from_scene(&Scene::default()));
         self.selected_node = self.hierarchy.selected_node_index();
         self.sync_inspector();
+        self.touch_scene();
     }
 
     pub fn save_scene(&self) {
@@ -188,6 +216,7 @@ impl AppState {
                     game.scene.nodes[node_idx].transform = t;
                 }
             }
+            self.touch_scene();
         }
     }
 

@@ -109,18 +109,24 @@ pub fn draw(f: &mut Frame, app: &AppState, viewport: Option<&mut Viewport>) -> P
         ViewportMode::Braille => Some(TextArtMode::Braille),
         ViewportMode::Image => None,
     };
-    let canvas = app.loader.current_game().and_then(|g| g.canvas.as_ref());
+    // The root view decides what the panel shows. Rooted on a canvas, the panel
+    // draws the screen: the game picture is one node in it and any UI is a
+    // sibling. Rooted on a world, the world goes straight to the terminal —
+    // a spinning bunny needs no UI, so it gets no compositing pass.
+    let entry = app.loader.current_game();
+    let canvas = entry.and_then(|g| g.canvas.as_ref());
+    let camera = app.display_camera();
+    let rev = app.scene_rev();
     match (viewport, app.display_scene()) {
         (Some(vp), Some(scene)) => {
             if let Some(mode) = text_mode {
-                // With a canvas, the panel draws the screen: the game picture is
-                // one node in it and any UI is a sibling. Without one, the world
-                // directly.
-                let text = match canvas {
-                    Some(canvas) => {
+                let text = match (canvas, entry) {
+                    (Some(canvas), Some(entry)) => {
                         let mut host = super::viewport::WorldHost {
                             viewport: vp,
+                            game: &entry.game,
                             world: scene,
+                            rev,
                             mode,
                         };
                         super::canvas::composite(
@@ -130,11 +136,18 @@ pub fn draw(f: &mut Frame, app: &AppState, viewport: Option<&mut Viewport>) -> P
                             vp_inner.height,
                         )
                     }
-                    None => vp.render_text(scene, mode, vp_inner.width, vp_inner.height),
+                    _ => vp.render_text(
+                        scene,
+                        &camera,
+                        rev,
+                        mode,
+                        vp_inner.width,
+                        vp_inner.height,
+                    ),
                 };
                 f.render_widget(Paragraph::new(text), vp_inner);
             } else {
-                vp.render_scene(scene);
+                vp.render_scene(scene, &camera, rev);
                 let img_widget = StatefulImage::default();
                 f.render_stateful_widget(img_widget, vp_inner, &mut vp.image_state);
             }

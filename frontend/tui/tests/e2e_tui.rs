@@ -106,8 +106,8 @@ const GAME_RON: &str = r#"(
     name: "test",
     input: "input.tres.ron",
     views: {
-        "main": ( unit: Ref("canvas.ron"), graphics: View2D, camera: ( projection: Screen ) ),
-        "game": ( unit: Ref("world.ron"), graphics: View3D,
+        // World-rooted: these tests edit a world, and there is no UI over it.
+        "main": ( unit: World("world.ron"), graphics: View3D,
                   camera: ( projection: Perspective( fov_y_degrees: 60.0, znear: 0.1, zfar: 100.0 ) ) ),
     },
 )"#;

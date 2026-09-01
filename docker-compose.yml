@@ -1,5 +1,61 @@
+# The engine runs from source in the container. `docker compose run --rm ide`
+# gives you the TUI; edit an engine crate and run it again and only that crate
+# rebuilds, because both target/ and the cargo registry are on volumes.
 services:
+  # The IDE. Needs a tty, so use `run`, not `up`.
+  #   docker compose run --rm ide
+  ide:
+    build:
+      context: .
+      network: host
+    tty: true
+    stdin_open: true
+    volumes:
+      - .:/engine
+      - ../shinra-examples:/examples
+      - cargo:/cargo
+    working_dir: /engine
+
+  # Same image, no tty: render N frames of one bundle to a PPM on stdout.
+  #   docker compose run --rm shot game1 -n 4 --size 160x90 > f.ppm
+  shot:
+    build:
+      context: .
+      network: host
+    entrypoint: ["cargo", "run", "-q", "-p", "se-cli", "--", "shot"]
+    volumes:
+      - .:/engine
+      - ../shinra-examples:/examples
+      - cargo:/cargo
+    working_dir: /examples
+
+  # Build every bundle in the deck without running anything.
+  build-examples:
+    build:
+      context: .
+      network: host
+    entrypoint: ["bash", "-c"]   # not -lc: a login shell resets PATH and loses cargo
+    command: ["for g in /examples/game*; do cargo run -q -p se-cli -- build \"$$g\" || exit 1; done"]
+    volumes:
+      - .:/engine
+      - ../shinra-examples:/examples
+      - cargo:/cargo
+    working_dir: /engine
+
+  test:
+    profiles: ["test"]
+    build:
+      context: .
+      network: host
+    command: ["cargo", "test", "--workspace"]
+    volumes:
+      - .:/engine
+      - cargo:/cargo
+    working_dir: /engine
+
+  # The Svelte + Tauri GUI, kept from the original tree.
   gui:
+    profiles: ["gui"]
     build:
       context: ./frontend/gui
       network: host
@@ -12,32 +68,5 @@ services:
       - ./frontend/gui:/app
       - /app/node_modules
 
-  e2e:
-    profiles:
-      - test
-    build:
-      context: ./frontend/gui/e2e
-      network: host
-    volumes:
-      - ./frontend/gui/e2e/tests:/tests/tests
-      - ./.browser:/output
-    environment:
-      BASE_URL: http://gui:1420
-    depends_on:
-      - gui
-
-  # Rust workspace tests (engine, scene, tui, abi)
-  rust-test:
-    profiles:
-      - test
-    build:
-      context: .
-      dockerfile: Dockerfile
-      network: host
-    volumes:
-      - .:/engine-core
-      - ${HOME}/.cargo:/cargo
-    working_dir: /engine-core
-    environment:
-      CARGO_HOME: /cargo
-    command: cargo test --workspace
+volumes:
+  cargo:

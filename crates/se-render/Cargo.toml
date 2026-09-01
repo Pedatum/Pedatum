@@ -1,0 +1,12 @@
+[package]
+name = "se-render"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+se-abi.workspace = true
+se-host.workspace = true
+anyhow.workspace = true
+wgpu.workspace = true
+pollster.workspace = true
+bytemuck.workspace = true

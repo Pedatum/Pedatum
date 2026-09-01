@@ -1,0 +1,8 @@
+[package]
+name = "se"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+se-abi.workspace = true
+se-macro.workspace = true

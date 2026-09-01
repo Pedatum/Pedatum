@@ -1,30 +1,34 @@
-# Dev-mode image: keeps the full Rust toolchain inside the container so the
-# editor-server is built (and re-built) from source mounted at /engine-core.
-# Use Dockerfile.release for a slim multi-stage runtime image.
-# Rust MSRV is set by Cargo.lock — wgpu 27 needs 1.88, getrandom needs
-# edition 2024 (stabilized in 1.85). 1.88-bookworm covers both.
-FROM rust:1.88-bookworm
+# One image, one stage. The toolchain stays in it so the engine is built *and*
+# run from the same container: edit a crate, hit the command again, and only
+# what changed recompiles. A two-stage release image would throw the toolchain
+# away and make every engine edit a full rebuild, which is the opposite of what
+# you want while working on the engine.
+#
+# Pinned to the toolchain this is developed against. Do not lower it to a
+# guessed MSRV: the graphics stack pulls transitive crates that raise their
+# own floor between patch releases (ordered-float wanted 1.90 the first time
+# this image was built against 1.88), and finding that out is a container
+# rebuild each time.
+FROM rust:1.93-bookworm
 
-# - cmake / nasm / pkg-config: openh264 source build (transitive dep)
-# - mesa-vulkan-drivers / libvulkan1: software Vulkan (lavapipe) so wgpu
-#   renders without a physical GPU
+# mesa-vulkan-drivers + libvulkan1 give lavapipe: software Vulkan, so wgpu
+# renders with no GPU and no /dev/dri. This is a supported configuration for
+# this engine, not a fallback — it never opens a window.
+# pkg-config/cmake cover native deps pulled in by the graphics stack.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    cmake \
-    nasm \
-    pkg-config \
-    mesa-vulkan-drivers \
-    libvulkan1 \
+      cmake \
+      pkg-config \
+      mesa-vulkan-drivers \
+      libvulkan1 \
     && rm -rf /var/lib/apt/lists/*
 
-# /engine-core (source) and /game (project) are bind-mounted at runtime.
-# The editor-server resolves asset paths relative to its current directory.
-WORKDIR /game
+# Both are bind-mounted at run time; cargo builds into /engine/target on the
+# mount, so the build cache survives `docker compose down` and an engine edit
+# recompiles one crate rather than the world.
+ENV CARGO_HOME=/cargo \
+    SHINRA_ENGINE=/engine \
+    CARGO_TERM_COLOR=always
+WORKDIR /engine
 
-EXPOSE 5812
-EXPOSE 5813
-EXPOSE 5814
-
-# cargo builds into /engine-core/target/ on the bind mount, so the build
-# persists across `docker compose up`. First build is slow; subsequent ones
-# only touch crates whose source actually changed.
-CMD ["cargo", "run", "--release", "--manifest-path", "/engine-core/Cargo.toml", "-p", "editor-server"]
+# The IDE is a terminal program: it needs a tty, which compose grants.
+CMD ["cargo", "run", "-q", "-p", "se-cli", "--", "run", "/examples"]
